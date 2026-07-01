@@ -1,0 +1,63 @@
+name: Zenodo drift check (reusable)
+
+# Reusable workflow: alert if the latest GitHub release isn't the latest version
+# on Zenodo. Reads only public APIs — no secrets required. Call it from a target
+# repo on a schedule:
+#
+#   on:
+#     schedule: [{ cron: '0 12 * * 1' }]
+#   jobs:
+#     drift:
+#       uses: <ORG>/zenodo-maint/.github/workflows/drift.reusable.yml@v1
+#       with:
+#         concept_recid: '21053715'
+#       permissions:
+#         issues: write
+
+on:
+  workflow_call:
+    inputs:
+      concept_recid: { type: string, required: true }
+      repo: { type: string, required: false, default: '' }
+      ref: { type: string, required: false, default: 'v1' }
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install zenodo-maint
+        env:
+          REF: ${{ inputs.ref }}
+        run: pipx install "git+https://github.com/<ORG>/zenodo-maint@${REF}"
+      - name: Check drift
+        id: check
+        env:
+          CONCEPT: ${{ inputs.concept_recid }}
+          REPO_IN: ${{ inputs.repo }}
+        run: |
+          set -uo pipefail
+          repo="${REPO_IN:-$GITHUB_REPOSITORY}"
+          if zenodo-maint --concept "$CONCEPT" --repo "$repo" check-drift; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open or update issue on drift
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="Zenodo release archiving has drifted"
+          num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          body="The latest GitHub release is not the latest version on Zenodo. The release->Zenodo archiving pipeline may have stopped working. Filed by zenodo-maint drift check."
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "Still drifting as of this run."
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+          exit 1

@@ -1,0 +1,49 @@
+name: Zenodo archive (reusable)
+
+# Reusable workflow: archive a published release as a new version of a Zenodo
+# concept record. Call it from a target repo:
+#
+#   jobs:
+#     archive:
+#       uses: <ORG>/zenodo-maint/.github/workflows/archive.reusable.yml@v1
+#       with:
+#         concept_recid: '21053715'
+#         continues_doi: '10.5281/zenodo.5057108'
+#         tag: ${{ github.event.release.tag_name }}
+#       secrets:
+#         ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+
+on:
+  workflow_call:
+    inputs:
+      concept_recid: { type: string, required: true }
+      tag: { type: string, required: false, default: 'latest' }
+      continues_doi: { type: string, required: false, default: '' }
+      repo: { type: string, required: false, default: '' } # defaults to caller repo
+      ref: { type: string, required: false, default: 'v1' } # zenodo-maint version
+    secrets:
+      ZENODO_TOKEN: { required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install zenodo-maint
+        env:
+          REF: ${{ inputs.ref }}
+        run: pipx install "git+https://github.com/<ORG>/zenodo-maint@${REF}"
+      - name: Archive release
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          CONCEPT: ${{ inputs.concept_recid }}
+          REPO_IN: ${{ inputs.repo }}
+          CONTINUES: ${{ inputs.continues_doi }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          repo="${REPO_IN:-$GITHUB_REPOSITORY}"
+          zenodo-maint --concept "$CONCEPT" --repo "$repo" --continues "$CONTINUES" \
+            archive-release --tag "$TAG" --execute

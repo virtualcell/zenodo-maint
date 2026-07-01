@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zenodo-maint"
+version = "0.1.0"
+description = "Reusable Zenodo record maintenance for GitHub release archiving"
+readme = "README.md"
+requires-python = ">=3.11"          # tomllib
+license = { text = "MIT" }
+dependencies = []                    # stdlib only, by design
+
+[project.scripts]
+zenodo-maint = "zenodo_maint.cli:main"
+
+[tool.setuptools]
+packages = ["zenodo_maint"]
