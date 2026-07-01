@@ -8,7 +8,7 @@ name: Zenodo drift check (reusable)
 #     schedule: [{ cron: '0 12 * * 1' }]
 #   jobs:
 #     drift:
-#       uses: <ORG>/zenodo-maint/.github/workflows/drift.reusable.yml@v1
+#       uses: virtualcell/zenodo-maint/.github/workflows/drift.reusable.yml@v1
 
 on:
   workflow_call:
@@ -28,7 +28,7 @@ jobs:
       - name: Install zenodo-maint
         env:
           REF: ${{ inputs.ref }}
-        run: pipx install "git+https://github.com/<ORG>/zenodo-maint@${REF}"
+        run: pipx install "git+https://github.com/virtualcell/zenodo-maint@${REF}"
       - name: Check drift
         id: check
         env:

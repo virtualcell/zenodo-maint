@@ -23,7 +23,7 @@ No bespoke config: the tool reads the **standard files**.
 ## Install
 
 ```bash
-pipx install git+https://github.com/<ORG>/zenodo-maint      # or: pip install -e .
+pipx install git+https://github.com/virtualcell/zenodo-maint      # or: pip install -e .
 ```
 
 Requires Python 3.11+. No third-party dependencies.
@@ -55,6 +55,9 @@ zenodo-maint relink --from-relation isNewVersionOf --to-relation continues --exe
 
 # re-apply .zenodo.json metadata (e.g. after editing authors) to all versions
 zenodo-maint apply-metadata --execute
+
+# scaffold the two standard files for a new repo
+zenodo-maint --repo owner/repo bootstrap
 ```
 
 Outside a configured repo, pass `--concept`, `--repo`, `--citation`, and/or
@@ -70,7 +73,7 @@ and two thin callers:
 on: { release: { types: [published] } }
 jobs:
   archive:
-    uses: <ORG>/zenodo-maint/.github/workflows/archive.reusable.yml@v1
+    uses: virtualcell/zenodo-maint/.github/workflows/archive.reusable.yml@v1
     with: { concept_recid: '21053715', continues_doi: '10.5281/zenodo.5057108', tag: '${{ github.event.release.tag_name }}' }
     secrets: { ZENODO_TOKEN: '${{ secrets.ZENODO_TOKEN }}' }
 ```
@@ -79,12 +82,36 @@ jobs:
 on: { schedule: [{ cron: '0 12 * * 1' }], workflow_dispatch: {} }
 jobs:
   drift:
-    uses: <ORG>/zenodo-maint/.github/workflows/drift.reusable.yml@v1
+    uses: virtualcell/zenodo-maint/.github/workflows/drift.reusable.yml@v1
     with: { concept_recid: '21053715' }
 ```
 
 Then **disable the repo's native Zenodo↔GitHub integration** so it can't create a
 competing DOI.
+
+## Monitoring many repos
+
+This repo's own `.github/workflows/monitor.yml` checks every repo listed in
+[`monitored.json`](monitored.json) on a schedule (a matrix of `{repo, concept}`),
+opening a tracking issue here for any that have drifted. Add a repo by appending
+to `monitored.json` — no secrets required (public APIs only).
+
+## `.zenodo.json` must be JSON
+
+Zenodo validates `.zenodo.json` against its legacy deposit JSON Schema — there is
+no YAML variant it reads. Author in **CITATION.cff** (which *is* YAML) and generate
+`.zenodo.json` with `cffconvert`. (If both files exist, Zenodo's native integration
+uses `.zenodo.json` and ignores CITATION.cff — which is what we want.)
+
+## Development
+
+```bash
+uv sync --group dev
+uv run ruff check zenodo_maint
+uv run mypy            # strict
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff + mypy-strict on every push/PR.
 
 ## Claude skill
 

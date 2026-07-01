@@ -7,12 +7,28 @@ name = "zenodo-maint"
 version = "0.1.0"
 description = "Reusable Zenodo record maintenance for GitHub release archiving"
 readme = "README.md"
-requires-python = ">=3.11"          # tomllib
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = []                    # stdlib only, by design
 
 [project.scripts]
 zenodo-maint = "zenodo_maint.cli:main"
 
+[dependency-groups]
+dev = ["mypy>=1.11", "ruff>=0.6"]
+
 [tool.setuptools]
 packages = ["zenodo_maint"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["zenodo_maint"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+ignore = ["S101", "S310"]            # allow asserts; urllib to known hosts is intended

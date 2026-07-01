@@ -14,7 +14,7 @@ Drive the deterministic `zenodo-maint` CLI (this repo) for all Zenodo writes.
 irreversible writes behind `--execute`.
 
 ## Install / token
-- `pipx install git+https://github.com/<ORG>/zenodo-maint` (or `pip install -e .` from a clone).
+- `pipx install git+https://github.com/virtualcell/zenodo-maint` (or `pip install -e .` from a clone).
 - Token: `~/.ssh/zenodo-token`, or `$ZENODO_TOKEN`, or `--token-file`. It must belong
   to the **account that owns the concept record** (creating versions requires ownership).
 - Every mutating command is **dry-run by default**; add `--execute` to write.

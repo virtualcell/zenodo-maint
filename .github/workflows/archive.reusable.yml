@@ -6,7 +6,7 @@ name: Zenodo archive (reusable)
 #
 #   jobs:
 #     archive:
-#       uses: <ORG>/zenodo-maint/.github/workflows/archive.reusable.yml@v1
+#       uses: virtualcell/zenodo-maint/.github/workflows/archive.reusable.yml@v1
 #       with:
 #         tag: ${{ github.event.release.tag_name }}
 #       secrets:
@@ -32,7 +32,7 @@ jobs:
       - name: Install zenodo-maint
         env:
           REF: ${{ inputs.ref }}
-        run: pipx install "git+https://github.com/<ORG>/zenodo-maint@${REF}"
+        run: pipx install "git+https://github.com/virtualcell/zenodo-maint@${REF}"
       - name: Archive release
         env:
           ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}

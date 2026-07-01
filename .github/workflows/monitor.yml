@@ -1,0 +1,63 @@
+name: Zenodo drift monitor
+
+# Central monitor: checks every repo in monitored.json for release-archiving drift
+# (latest GitHub release vs latest Zenodo version). No secrets — public APIs only.
+# A drifted repo turns its matrix leg red and opens/updates a tracking issue here.
+
+on:
+  schedule:
+    - cron: '0 12 * * 1' # weekly, Mondays 12:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set
+        run: echo "matrix=$(jq -c . monitored.json)" >> "$GITHUB_OUTPUT"
+
+  drift:
+    needs: load
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        item: ${{ fromJSON(needs.load.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx install .
+      - name: Check drift
+        id: check
+        env:
+          REPO: ${{ matrix.item.repo }}
+          CONCEPT: ${{ matrix.item.concept }}
+        run: |
+          set -uo pipefail
+          if zenodo-maint --repo "$REPO" --concept "$CONCEPT" check-drift; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open or update tracking issue
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ matrix.item.repo }}
+        run: |
+          set -euo pipefail
+          title="Zenodo archiving has drifted: ${REPO}"
+          num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "Still drifting as of this run."
+          else
+            gh issue create --title "$title" \
+              --body "\`${REPO}\`'s latest GitHub release is not the latest version on Zenodo. Its release->Zenodo archiving may have stopped. Filed by the zenodo-maint drift monitor."
+          fi
+          exit 1
