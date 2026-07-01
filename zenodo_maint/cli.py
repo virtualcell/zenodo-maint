@@ -57,11 +57,33 @@ def _repo(args: argparse.Namespace) -> str:
     return str(repo)
 
 
-def _base_metadata(args: argparse.Namespace, inherited: dict[str, Any]) -> dict[str, Any]:
-    """Deposit metadata base: the committed .zenodo.json if present, else the
-    metadata inherited from the previous version."""
+def _base_metadata(
+    args: argparse.Namespace, inherited: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """Deposit metadata base and whether it came from a committed .zenodo.json.
+
+    Returns (metadata, from_file): the committed .zenodo.json if present (from_file
+    True), else the metadata inherited from the previous version (from_file False).
+    The flag lets callers tell an intentional file-supplied `version` apart from the
+    previous release's `version` that rides along on an inherited draft."""
     zj = sources.read_zenodo_json(args.zenodo_json)
-    return dict(zj) if zj else dict(inherited)
+    if zj:
+        return dict(zj), True
+    return dict(inherited), False
+
+
+def _effective_version(
+    override: str | None, base: dict[str, Any], from_file: bool, tag: str
+) -> str:
+    """Resolve the record's `version` label. Precedence: an explicit --version
+    override, then a `version` supplied by a committed .zenodo.json, then the tag.
+    A `version` inherited from the previous release (from_file False) is ignored so
+    the default stays "label the record by its tag"."""
+    if override:
+        return override
+    if from_file and base.get("version"):
+        return str(base["version"])
+    return tag
 
 
 # --- commands -----------------------------------------------------------
@@ -105,26 +127,42 @@ def cmd_check_drift(args: argparse.Namespace) -> None:
 def _archive_one(
     cli: api.ZenodoClient, args: argparse.Namespace, concept: str, repo: str,
     tag: str, date: str, workdir: str, existing: dict[str, Any],
+    version: str | None = None, title: str | None = None,
 ) -> None:
-    if tag in existing:
-        print(f'  {tag}: already archived (id {existing[tag]["id"]}) — skip')
+    # `version`/`title` override the record's displayed label; the tarball and the
+    # GitHub supplement link always track the real `tag`. Creators/description come
+    # from --zenodo-json (too large for flags), so a curated record supplies those
+    # via a per-record metadata file.
+    label = version or tag
+    if tag in existing or (label != tag and label in existing):
+        hit = existing.get(tag) or existing[label]
+        print(f'  {tag}: already archived (id {hit["id"]}) — skip')
         return
     if not args.execute:
-        print(f"  {tag} ({date}): DRY-RUN — would add as new version of concept {concept}")
+        extra = []
+        if version:
+            extra.append(f"version '{version}'")
+        if title:
+            extra.append(f"title '{title}'")
+        note = f" as {', '.join(extra)}" if extra else ""
+        print(f"  {tag} ({date}): DRY-RUN — would add as new version of concept "
+              f"{concept}{note}")
         return
     latest = cli.latest_version(concept)
     tar = api.github_tarball(repo, tag, workdir)
     draft = cli.new_version(latest["id"])
     cli.replace_files(draft, tar)
-    md = _base_metadata(args, draft["metadata"])
-    md["version"] = tag
+    md, from_file = _base_metadata(args, draft["metadata"])
+    md["version"] = _effective_version(version, md, from_file, tag)
+    if title:
+        md["title"] = title
     md["publication_date"] = date
     md["related_identifiers"] = api.with_lineage(
         md.get("related_identifiers"), args.continues, repo, tag)
     md.setdefault("upload_type", "software")
     cli.set_metadata(draft["id"], md)
     r = cli.publish(draft["id"])
-    print(f'  {tag}: PUBLISHED -> {r.get("doi")}')
+    print(f'  {tag}: PUBLISHED as {md["version"]} -> {r.get("doi")}')
 
 
 def cmd_archive_release(args: argparse.Namespace) -> None:
@@ -141,20 +179,22 @@ def cmd_archive_release(args: argparse.Namespace) -> None:
     existing = {x["metadata"].get("version"): x for x in cli.concept_versions(concept)}
     print(f'{"EXECUTE" if args.execute else "DRY-RUN"} archive {tag} -> concept {concept}')
     with tempfile.TemporaryDirectory() as wd:
-        _archive_one(cli, args, concept, repo, tag, date, wd, existing)
+        _archive_one(cli, args, concept, repo, tag, date, wd, existing,
+                     version=args.version, title=args.title)
 
 
 def cmd_backfill(args: argparse.Namespace) -> None:
     cli = _client(args)
     concept, repo = _concept(cli, args), _repo(args)
     with open(args.tags_file) as fh:
-        tags = json.load(fh)  # [{"tag","date"}]
+        tags = json.load(fh)  # [{"tag","date"[,"version","title"]}]
     existing = {x["metadata"].get("version"): x for x in cli.concept_versions(concept)}
     mode = "EXECUTE" if args.execute else "DRY-RUN"
     print(f"{mode} backfill {len(tags)} tag(s) -> concept {concept}")
     with tempfile.TemporaryDirectory() as wd:
         for t in tags:
-            _archive_one(cli, args, concept, repo, t["tag"], t["date"], wd, existing)
+            _archive_one(cli, args, concept, repo, t["tag"], t["date"], wd, existing,
+                         version=t.get("version"), title=t.get("title"))
             if args.execute:
                 time.sleep(2)
 
@@ -190,23 +230,32 @@ def cmd_apply_metadata(args: argparse.Namespace) -> None:
     cli = _client(args)
     concept, repo = _concept(cli, args), _repo(args)
     targets = [cli.get(args.record)] if args.record else cli.concept_versions(concept)
+    if (args.version or args.title) and not args.record:
+        print("  ! --version/--title relabel every targeted record; "
+              "pair with --record <id> to relabel just one")
     print(f'{"EXECUTE" if args.execute else "DRY-RUN"} apply {args.zenodo_json} '
           f"to {len(targets)} record(s)")
     for x in targets:
         ver = x["metadata"].get("version")
+        # Preserve each record's own version/date unless explicitly overridden, so
+        # a bulk author fix never collapses distinct versions onto one label.
+        new_ver = args.version or zj.get("version") or ver
         if not args.execute:
-            print(f"  {ver}: would apply metadata")
+            relabel = f" -> version '{new_ver}'" if new_ver != ver else ""
+            print(f"  {ver}: would apply metadata{relabel}")
             continue
         cli.edit(x["id"])
         md = dict(zj)
-        md["version"] = ver
+        md["version"] = new_ver
+        if args.title:
+            md["title"] = args.title
         md["publication_date"] = x["metadata"].get("publication_date")
         md["related_identifiers"] = api.with_lineage(
             zj.get("related_identifiers"), args.continues, repo, ver)
         md.setdefault("upload_type", "software")
         cli.set_metadata(x["id"], md)
         cli.publish(x["id"])
-        print(f"  {ver}: metadata applied")
+        print(f"  {ver}: metadata applied{'' if new_ver == ver else f' (now {new_ver})'}")
 
 
 CITATION_TEMPLATE = """\
@@ -337,10 +386,14 @@ def build_parser() -> argparse.ArgumentParser:
     a = sub.add_parser("archive-release", help="archive one release tag as a new version")
     a.add_argument("--tag", required=True, help='release tag, or "latest"')
     a.add_argument("--date", help="publication date YYYY-MM-DD (default: from the release)")
+    a.add_argument("--version", help="version label for the record (default: the tag)")
+    a.add_argument("--title", help="title for the record (default: from --zenodo-json)")
     a.set_defaults(func=cmd_archive_release)
 
     b = sub.add_parser("backfill", help="archive many tags from a JSON list")
-    b.add_argument("--tags-file", required=True, help='JSON list of {"tag","date"}')
+    b.add_argument("--tags-file", required=True,
+                   help='JSON list of {"tag","date"}; each entry may also carry '
+                        'optional "version"/"title" label overrides')
     b.set_defaults(func=cmd_backfill)
 
     r = sub.add_parser("relink", help="change a related_identifiers relation on all versions")
@@ -350,6 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("apply-metadata", help="apply .zenodo.json to all versions (or one record)")
     m.add_argument("--record", help="limit to a single deposition id")
+    m.add_argument("--version", help="relabel the record's version (use with --record)")
+    m.add_argument("--title", help="relabel the record's title (use with --record)")
     m.set_defaults(func=cmd_apply_metadata)
 
     bs = sub.add_parser("bootstrap", help="scaffold CITATION.cff and .zenodo.json")
