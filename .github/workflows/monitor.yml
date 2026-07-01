@@ -39,25 +39,33 @@ jobs:
           REPO: ${{ matrix.item.repo }}
           CONCEPT: ${{ matrix.item.concept }}
         run: |
-          set -uo pipefail
-          if zenodo-maint --repo "$REPO" --concept "$CONCEPT" check-drift; then
-            echo "drift=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-          fi
+          set -u
+          code=0
+          zenodo-maint --repo "$REPO" --concept "$CONCEPT" check-drift || code=$?
+          case $code in
+            0) echo "state=ok" >> "$GITHUB_OUTPUT" ;;
+            2) echo "state=drift" >> "$GITHUB_OUTPUT" ;;
+            *) echo "state=error" >> "$GITHUB_OUTPUT" ;;
+          esac
       - name: Open or update tracking issue
-        if: steps.check.outputs.drift == 'true'
+        if: steps.check.outputs.state != 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ matrix.item.repo }}
+          STATE: ${{ steps.check.outputs.state }}
         run: |
           set -euo pipefail
-          title="Zenodo archiving has drifted: ${REPO}"
+          if [ "$STATE" = "drift" ]; then
+            title="Zenodo archiving has drifted: ${REPO}"
+            body="\`${REPO}\`'s latest GitHub release is not the latest version on Zenodo. Its release->Zenodo archiving may have stopped. Filed by the zenodo-maint drift monitor."
+          else
+            title="Zenodo drift check errored: ${REPO}"
+            body="The drift check for \`${REPO}\` failed to run (this is a check error, not necessarily drift). See the workflow run logs."
+          fi
           num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
           if [ -n "$num" ]; then
-            gh issue comment "$num" --body "Still drifting as of this run."
+            gh issue comment "$num" --body "Still ${STATE} as of this run."
           else
-            gh issue create --title "$title" \
-              --body "\`${REPO}\`'s latest GitHub release is not the latest version on Zenodo. Its release->Zenodo archiving may have stopped. Filed by the zenodo-maint drift monitor."
+            gh issue create --title "$title" --body "$body"
           fi
           exit 1

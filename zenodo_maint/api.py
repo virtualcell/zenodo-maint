@@ -169,6 +169,40 @@ def github_tarball(repo: str, tag: str, dest_dir: str) -> str:
     return fn
 
 
+def public_get(path: str, sandbox: bool = False) -> tuple[int, Any]:
+    """Unauthenticated GET against the public records API."""
+    base = SANDBOX if sandbox else PROD
+    url = path if path.startswith("http") else base + path
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return int(r.status), json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return int(e.code), e.read().decode(errors="replace")
+
+
+def public_latest_version(concept_recid: str, sandbox: bool = False) -> str | None:
+    """Latest published version string for a concept — public, no token. Fetching
+    the concept record id follows redirects to the latest version's record."""
+    st, d = public_get(f"/records/{concept_recid}", sandbox)
+    if st != 200:
+        raise ZenodoError(f"could not read record {concept_recid}: HTTP {st}: {d}")
+    version: str | None = d.get("metadata", {}).get("version")
+    return version
+
+
+def public_concept_from_doi(doi: str | None, sandbox: bool = False) -> str:
+    """Resolve a Zenodo DOI to its concept record id — public, no token."""
+    m = re.search(r"zenodo\.(\d+)", doi or "")
+    if not m:
+        raise ZenodoError(f"not a Zenodo DOI: {doi!r}")
+    recid = m.group(1)
+    st, d = public_get(f"/records/{recid}", sandbox)
+    if st == 200 and d.get("conceptrecid"):
+        return str(d["conceptrecid"])
+    return recid
+
+
 def _gh(url: str) -> dict[str, Any]:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req) as r:

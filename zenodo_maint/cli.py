@@ -78,9 +78,17 @@ def cmd_list_versions(args: argparse.Namespace) -> None:
 
 
 def cmd_check_drift(args: argparse.Namespace) -> None:
-    cli = _client(args)
-    gh_tag, _ = api.latest_github_release(_repo(args))
-    zen = cli.latest_version(_concept(cli, args))["metadata"].get("version")
+    # Public APIs only — no token, so this is safe to run in a secret-less monitor.
+    repo = _repo(args)
+    if args.concept:
+        concept = str(args.concept)
+    else:
+        doi = sources.citation_doi(args.citation)
+        if not doi:
+            sys.exit("no concept: pass --concept or set a top-level doi: in CITATION.cff")
+        concept = api.public_concept_from_doi(doi, args.sandbox)
+    gh_tag, _ = api.latest_github_release(repo)
+    zen = api.public_latest_version(concept, args.sandbox)
     print(f"latest GitHub release : {gh_tag}")
     print(f"latest Zenodo version : {zen}")
     if gh_tag == zen:
