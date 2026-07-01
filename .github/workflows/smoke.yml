@@ -1,0 +1,29 @@
+name: Sandbox smoke test
+
+# Exercises the full Zenodo deposit flow against sandbox.zenodo.org so an
+# API-breaking change surfaces here before it reaches production. This is our
+# "track the API" mechanism (Zenodo ships no versioned SDK). Needs a
+# ZENODO_SANDBOX_TOKEN secret (a token from sandbox.zenodo.org); the script
+# skips cleanly if it's absent.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # weekly, Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.11'
+      - run: uv sync
+      - name: smoke test against sandbox.zenodo.org
+        env:
+          ZENODO_SANDBOX_TOKEN: ${{ secrets.ZENODO_SANDBOX_TOKEN }}
+        run: uv run python scripts/sandbox_smoke.py

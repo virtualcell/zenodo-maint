@@ -58,6 +58,9 @@ zenodo-maint apply-metadata --execute
 
 # scaffold the two standard files for a new repo
 zenodo-maint --repo owner/repo bootstrap
+
+# preflight: detect a native-integration conflict, competing concepts, or drift
+GH_TOKEN=$(gh auth token) zenodo-maint doctor
 ```
 
 Outside a configured repo, pass `--concept`, `--repo`, `--citation`, and/or
@@ -96,6 +99,31 @@ This repo's own `.github/workflows/monitor.yml` checks every repo listed in
 opening a tracking issue here for any that have drifted. Add a repo by appending
 to `monitored.json` — no secrets required (public APIs only).
 
+## Avoiding conflicts with the native integration
+
+Only one publisher should archive a repo, or you get duplicate/forked concept
+DOIs. Zenodo's native GitHub integration **cannot** be pointed at a pre-existing
+record (it always creates its own concept), so it must stay **disabled** when you
+use this tool. `doctor` is the preflight gate:
+
+- **webhook check** — flags a `zenodo.org` webhook (needs `GH_TOKEN` with
+  repo-admin). This is the reliable signal that the native integration is on.
+- **competing-concept check** — tokenless Zenodo search for other concepts
+  archiving the repo (best-effort; empty on any search error, so it never
+  false-alarms).
+- **drift check** — latest GitHub release vs latest Zenodo version.
+
+### Where allowed concepts are recorded
+`doctor` treats a concept as expected if it is any of:
+1. the target concept (from `CITATION.cff` `doi:`);
+2. **referenced in `.zenodo.json` `related_identifiers`** — this is the normal
+   home; the pre-fork lineage is already here via `continues`, so it needs no
+   separate list;
+3. passed via `--allow-concept <id>` (repeatable) — an escape hatch for a
+   deliberate second concept you don't want in metadata.
+
+For the central monitor, per-repo allowances can go in `monitored.json`.
+
 ## `.zenodo.json` must be JSON
 
 Zenodo validates `.zenodo.json` against its legacy deposit JSON Schema — there is
@@ -112,6 +140,13 @@ uv run mypy            # strict
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff + mypy-strict on every push/PR.
+
+**Tracking Zenodo API changes:** Zenodo ships no versioned SDK, so
+`.github/workflows/smoke.yml` runs `scripts/sandbox_smoke.py` weekly against
+`sandbox.zenodo.org` — exercising create → upload → publish → new-version → edit.
+If Zenodo changes the deposit API, that job goes red before production breaks.
+Add a `ZENODO_SANDBOX_TOKEN` secret (a token from sandbox.zenodo.org) to enable
+it; it skips cleanly without one.
 
 ## Claude skill
 

@@ -39,6 +39,16 @@ def _concept(cli: api.ZenodoClient, args: argparse.Namespace) -> str:
     return cli.concept_from_doi(doi)
 
 
+def _concept_public(args: argparse.Namespace) -> str:
+    """Resolve the concept without a Zenodo token (for public-only commands)."""
+    if args.concept:
+        return str(args.concept)
+    doi = sources.citation_doi(args.citation)
+    if not doi:
+        sys.exit("no concept: pass --concept or set a top-level doi: in CITATION.cff")
+    return api.public_concept_from_doi(doi, args.sandbox)
+
+
 def _repo(args: argparse.Namespace) -> str:
     repo = (args.repo or os.environ.get("GITHUB_REPOSITORY")
             or sources.citation_repo(args.citation))
@@ -80,13 +90,7 @@ def cmd_list_versions(args: argparse.Namespace) -> None:
 def cmd_check_drift(args: argparse.Namespace) -> None:
     # Public APIs only — no token, so this is safe to run in a secret-less monitor.
     repo = _repo(args)
-    if args.concept:
-        concept = str(args.concept)
-    else:
-        doi = sources.citation_doi(args.citation)
-        if not doi:
-            sys.exit("no concept: pass --concept or set a top-level doi: in CITATION.cff")
-        concept = api.public_concept_from_doi(doi, args.sandbox)
+    concept = _concept_public(args)
     gh_tag, _ = api.latest_github_release(repo)
     zen = api.public_latest_version(concept, args.sandbox)
     print(f"latest GitHub release : {gh_tag}")
@@ -249,6 +253,66 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
           "add the concept doi: to CITATION.cff after the first archive")
 
 
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Preflight: detect native-integration conflicts, competing concepts, drift.
+    Exits non-zero if any problem is found (usable as a setup gate)."""
+    repo = _repo(args)
+    concept = _concept_public(args)
+    problems = 0
+    print(f"doctor: repo={repo} concept={concept}\n")
+
+    # A — native integration webhook (needs a repo-admin GitHub token)
+    print("[integration webhook]")
+    ghtok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not ghtok:
+        print("  ? skipped — set GH_TOKEN (repo-admin) to check for a zenodo.org webhook")
+    else:
+        try:
+            hooks = api.github_webhooks(repo, ghtok)
+            zen = [h for h in hooks if "zenodo.org" in str(h.get("config", {}).get("url", ""))]
+            if zen:
+                print("  ✗ CONFLICT — a zenodo.org webhook is enabled; the native integration")
+                print("    will fork a competing concept on the next release. Disable it.")
+                problems += 1
+            else:
+                print("  ✓ no zenodo.org webhook")
+        except Exception as e:  # noqa: BLE001
+            print(f"  ? could not read webhooks ({e})")
+
+    # B — competing Zenodo concepts (tokenless, best-effort)
+    print("[zenodo concepts]")
+    allowed = {str(a) for a in (args.allow_concept or [])}
+    st, rec = api.public_get(f"/records/{concept}", args.sandbox)
+    if st == 200 and isinstance(rec, dict):
+        allowed |= api.concept_ids_in_related(rec.get("metadata", {}))
+    zj = sources.read_zenodo_json(args.zenodo_json)
+    if zj:
+        allowed |= api.concept_ids_in_related(zj)
+    found = api.concepts_referencing_repo(repo, args.sandbox)
+    conflicts = found - {str(concept)} - allowed
+    if conflicts:
+        print(f"  ✗ CONFLICT — unexpected concept(s): {', '.join(sorted(conflicts))}")
+        print("    if intentional, allow with --allow-concept <id>")
+        problems += 1
+    else:
+        print(f"  ✓ target {concept}; allowed {sorted(allowed) or '[]'}; found {sorted(found)}")
+
+    # C — drift
+    print("[drift]")
+    gh_tag, _ = api.latest_github_release(repo)
+    zen_ver = api.public_latest_version(concept, args.sandbox)
+    if gh_tag == zen_ver:
+        print(f"  ✓ in sync ({gh_tag})")
+    else:
+        print(f"  ✗ DRIFT — github={gh_tag} zenodo={zen_ver}")
+        problems += 1
+
+    print()
+    if problems:
+        sys.exit(f"doctor: {problems} problem(s) found")
+    print("doctor: healthy")
+
+
 # --- parser -------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="zenodo-maint", description=__doc__)
@@ -257,6 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--concept", help="concept record id (default: from CITATION.cff doi)")
     p.add_argument("--repo", help="owner/repo (default: $GITHUB_REPOSITORY or CITATION.cff)")
     p.add_argument("--continues", help='DOI to link via "continues" if not already in metadata')
+    p.add_argument("--allow-concept", action="append",
+                   help="concept id to treat as expected in doctor (repeatable)")
     p.add_argument("--zenodo-json", default=".zenodo.json", help="deposit metadata file")
     p.add_argument("--citation", default="CITATION.cff", help="citation file (concept DOI + repo)")
     p.add_argument("--execute", action="store_true", help="actually write (default: dry run)")
@@ -265,6 +331,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("verify-token").set_defaults(func=cmd_verify_token)
     sub.add_parser("list-versions").set_defaults(func=cmd_list_versions)
     sub.add_parser("check-drift").set_defaults(func=cmd_check_drift)
+    sub.add_parser("doctor", help="check for integration conflicts, forks, and drift"
+                   ).set_defaults(func=cmd_doctor)
 
     a = sub.add_parser("archive-release", help="archive one release tag as a new version")
     a.add_argument("--tag", required=True, help='release tag, or "latest"')

@@ -203,6 +203,63 @@ def public_concept_from_doi(doi: str | None, sandbox: bool = False) -> str:
     return recid
 
 
+def concept_ids_in_related(metadata: dict[str, Any]) -> set[str]:
+    """Concept ids referenced by this record's related_identifiers (Zenodo DOIs).
+    Used to auto-allow lineage links such as `continues` when detecting conflicts."""
+    out: set[str] = set()
+    for r in metadata.get("related_identifiers", []) or []:
+        m = re.search(r"zenodo\.(\d+)", str(r.get("identifier", "")))
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def _identifier_is_repo(identifier: str, repo: str) -> bool:
+    """True if a related-identifier URL points at exactly github.com/<repo> (not a
+    different repo that merely shares a prefix, e.g. vcell vs vcell-solvers)."""
+    s = str(identifier)
+    idx = s.find("github.com/")
+    if idx < 0:
+        return False
+    path = s[idx + len("github.com/"):].split("#")[0].split("?")[0]
+    if path.endswith(".git"):
+        path = path[:-4]
+    return path == repo or path.startswith(repo + "/")
+
+
+def concepts_referencing_repo(repo: str, sandbox: bool = False) -> set[str]:
+    """Published Zenodo concepts whose records point at github.com/<repo> in their
+    related_identifiers — public, no token. Best-effort (wildcard search on the repo
+    name + a precise, boundary-aware client-side filter). Returns an empty set on
+    any search failure so callers never treat 'could not check' as a conflict."""
+    term = repo.split("/")[-1]  # no slashes/quotes in the query — those 500 the search
+    concepts: set[str] = set()
+    try:
+        q = urllib.parse.quote(f"related.identifier:*{term}*")
+        st, d = public_get(f"/records?q={q}&size=25", sandbox)  # 25 = public max
+    except Exception:
+        return set()
+    if st != 200 or not isinstance(d, dict):
+        return set()
+    for h in d.get("hits", {}).get("hits", []):
+        rels = h.get("metadata", {}).get("related_identifiers", []) or []
+        if any(_identifier_is_repo(str(r.get("identifier", "")), repo) for r in rels):
+            cid = h.get("conceptrecid")
+            if cid:
+                concepts.add(str(cid))
+    return concepts
+
+
+def github_webhooks(repo: str, token: str) -> list[dict[str, Any]]:
+    """Repo webhooks (needs a token with repo-admin). Raises on error."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/hooks",
+        headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req) as r:
+        return list(json.loads(r.read()))
+
+
 def _gh(url: str) -> dict[str, Any]:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req) as r:

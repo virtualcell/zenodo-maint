@@ -37,8 +37,17 @@ Run inside a repo that has both files and you can omit `--concept`/`--repo`.
 - Backfill missed releases: build a JSON `[{"tag","date"}]`, then `zenodo-maint backfill --tags-file tags.json` (dry-run, then `--execute`)
 - Rename a relation on all versions: `zenodo-maint relink --from-relation isNewVersionOf --to-relation continues --execute`
 - Re-apply metadata after editing `.zenodo.json` (e.g. authors): `zenodo-maint apply-metadata --execute`
+- Preflight before wiring up a repo: `GH_TOKEN=$(gh auth token) zenodo-maint doctor` — flags a native-integration `zenodo.org` webhook (must be disabled), competing/forked concepts, and drift.
 
 Outside a configured repo, pass `--concept`, `--repo`, `--citation`, `--zenodo-json`.
+
+## Conflict rule (only one publisher)
+The native Zenodo↔GitHub integration cannot target a pre-existing record — it
+always forks its own concept — so it must stay **disabled**; this tool is the sole
+publisher. `doctor` gates on that. A concept is "expected" if it's the target
+(`CITATION.cff` doi), referenced in `.zenodo.json` `related_identifiers` (where the
+`continues` lineage already lives — the normal place to record allowances), or
+passed via `--allow-concept`.
 
 ## Decision guidance (the judgment the CLI can't make)
 - **Can't access the original record's account?** Don't chase credentials — **fork**:
