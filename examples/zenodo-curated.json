@@ -1,0 +1,13 @@
+{
+  "//": "Example metadata for a CURATED record whose displayed label differs from its source tag. Pass with --zenodo-json and archive a chosen build: `zenodo-maint --zenodo-json examples/zenodo-curated.json archive-release --tag v9.66.0 --date 2024-05-01 --execute`. Here `version`/`title` set the displayed label (a --version/--title flag would override them); `creators` and `description` are the curated content. The uploaded tarball and GitHub supplement link still track --tag, so provenance points at the exact source commit.",
+  "upload_type": "software",
+  "title": "MyProject 9",
+  "version": "9",
+  "license": "MIT",
+  "creators": [
+    { "name": "Doe, Jane",   "affiliation": "Example University" },
+    { "name": "Roe, Richard", "affiliation": "Example University" }
+  ],
+  "description": "<p>MyProject is a ...</p><h2>Release 9 highlights</h2><ul><li>...</li></ul>",
+  "related_identifiers": []
+}

@@ -47,7 +47,14 @@ zenodo-maint check-drift                    # repo from CITATION.cff / $GITHUB_R
 # archive one release (metadata from .zenodo.json; date auto-resolved from GitHub)
 zenodo-maint archive-release --tag v9.66.0 --execute
 
-# backfill missed releases from a JSON list of {"tag","date"}
+# archive a tag but give the record a curated label (e.g. a major-version record):
+# the tarball + GitHub link still track --tag; creators/description come from the
+# --zenodo-json file; --version/--title override the displayed label.
+zenodo-maint --zenodo-json meta/v9.json \
+  archive-release --tag v9.66.0 --version 9 --title 'MyProject 9' --date 2024-05-01 --execute
+
+# backfill missed releases from a JSON list of {"tag","date"} (each entry may also
+# carry optional "version"/"title" label overrides)
 zenodo-maint backfill --tags-file tags.json --execute
 
 # fix a lineage relation across all versions
@@ -55,6 +62,11 @@ zenodo-maint relink --from-relation isNewVersionOf --to-relation continues --exe
 
 # re-apply .zenodo.json metadata (e.g. after editing authors) to all versions
 zenodo-maint apply-metadata --execute
+
+# edit one existing record — authors/title/description from --zenodo-json, and
+# optionally relabel its version/title (leaves every other record untouched)
+zenodo-maint --zenodo-json meta/v9.json \
+  apply-metadata --record 1234567 --version 9 --title 'MyProject 9' --execute
 
 # scaffold the two standard files for a new repo
 zenodo-maint --repo owner/repo bootstrap
@@ -65,6 +77,25 @@ GH_TOKEN=$(gh auth token) zenodo-maint doctor
 
 Outside a configured repo, pass `--concept`, `--repo`, `--citation`, and/or
 `--zenodo-json` explicitly. Use `--sandbox` to rehearse against sandbox.zenodo.org.
+
+### Curated / relabeled records
+
+By default a record is labeled by its source tag. To publish a **curated** record
+— one whose displayed `version`/`title` differ from the tag, e.g. a single
+"major-version" record whose content comes from a chosen build — decouple the
+label from the source:
+
+- **Content** (creators/authors, description, license) comes from `--zenodo-json`
+  — those fields are too large for flags and often differ per record, so a curated
+  record points at its own metadata file.
+- **Label** is `--version` / `--title` (or a `version`/`title` in the metadata
+  file). Precedence: explicit flag → metadata-file value → the tag.
+- **Provenance is preserved:** the uploaded tarball and the `isSupplementTo`
+  GitHub link always track the real `--tag`, so the record still cites the exact
+  source commit even when it displays a curated label.
+
+Use `archive-release`/`backfill` to create such a record, or `apply-metadata
+--record <id>` to relabel and re-author one that already exists.
 
 ## Reusable workflows
 
