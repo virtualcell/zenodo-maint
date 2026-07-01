@@ -1,7 +1,0 @@
-# Per-repo Zenodo facts. Commit this to each target repo's root.
-# Values here are defaults; CLI flags and $ZENODO_TOKEN / env override them.
-
-concept_recid = "21053715"                     # the concept (all-versions) record id
-continues_doi = "10.5281/zenodo.5057108"       # pre-fork lineage, linked via "continues"
-repo          = "biosimulations/biosimulations"
-authors_file  = "authors.json"                 # optional; see examples/authors.json

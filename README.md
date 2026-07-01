@@ -10,8 +10,15 @@ loud on failure, and portable across repos.
 ## Two layers
 
 1. **Repo-independent** — Zenodo record operations (the CLI). Run from anywhere.
-2. **Repo-operating** — per-repo automation (the reusable workflows) + a
-   `zenodo.toml` config that keeps each repo's facts in the repo.
+2. **Repo-operating** — per-repo automation (the reusable workflows).
+
+No bespoke config: the tool reads the **standard files**.
+- **CITATION.cff** — source of truth for citation/authors, and its top-level
+  `doi:` (the concept DOI) tells the tool *which record* to write to.
+- **.zenodo.json** — the Zenodo deposit metadata (creators, license,
+  `related_identifiers`, …). Generate it from CITATION.cff with
+  [`cffconvert`](https://github.com/citation-file-format/cffconvert)
+  (`cffconvert -f zenodo -o .zenodo.json`) and add the `continues` lineage link.
 
 ## Install
 
@@ -28,29 +35,30 @@ from `--token-file`, then `$ZENODO_TOKEN`, then `~/.ssh/zenodo-token`.
 
 ## Usage
 
-Mutating commands are **dry-run by default**; add `--execute` to write.
+Mutating commands are **dry-run by default**; add `--execute` to write. Run from
+a repo that has a `CITATION.cff` (concept DOI) and `.zenodo.json` (metadata) and
+you can omit `--concept`/`--repo` entirely:
 
 ```bash
 zenodo-maint verify-token
-zenodo-maint --concept 21053715 list-versions
-zenodo-maint --concept 21053715 --repo owner/repo check-drift
+zenodo-maint list-versions                 # concept from CITATION.cff doi:
+zenodo-maint check-drift                    # repo from CITATION.cff / $GITHUB_REPOSITORY
 
-# archive one release (date auto-resolved from GitHub)
-zenodo-maint --concept 21053715 --repo owner/repo \
-  --continues 10.5281/zenodo.5057108 archive-release --tag v9.66.0 --execute
+# archive one release (metadata from .zenodo.json; date auto-resolved from GitHub)
+zenodo-maint archive-release --tag v9.66.0 --execute
 
 # backfill missed releases from a JSON list of {"tag","date"}
-zenodo-maint --concept 21053715 --repo owner/repo backfill --tags-file tags.json --execute
+zenodo-maint backfill --tags-file tags.json --execute
 
 # fix a lineage relation across all versions
-zenodo-maint --concept 21053715 relink --from-relation isNewVersionOf --to-relation continues --execute
+zenodo-maint relink --from-relation isNewVersionOf --to-relation continues --execute
 
-# set the author list across all versions
-zenodo-maint --concept 21053715 set-authors --authors-file authors.json --execute
+# re-apply .zenodo.json metadata (e.g. after editing authors) to all versions
+zenodo-maint apply-metadata --execute
 ```
 
-Put a `zenodo.toml` (see `examples/`) in a repo to omit the flags there.
-Use `--sandbox` to exercise everything against sandbox.zenodo.org first.
+Outside a configured repo, pass `--concept`, `--repo`, `--citation`, and/or
+`--zenodo-json` explicitly. Use `--sandbox` to rehearse against sandbox.zenodo.org.
 
 ## Reusable workflows
 

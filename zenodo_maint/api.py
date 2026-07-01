@@ -13,6 +13,7 @@ responsible for the --dry-run / --execute gate.
 """
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -88,6 +89,17 @@ class ZenodoClient:
         st, d = self._call('GET', f'/deposit/depositions/{dep_id}')
         return self._expect((200,), st, d, f'get deposition {dep_id}')
 
+    def concept_from_doi(self, doi):
+        """Resolve a Zenodo DOI (concept or version) to its concept record id."""
+        m = re.search(r'zenodo\.(\d+)', doi or '')
+        if not m:
+            raise ZenodoError(f'not a Zenodo DOI: {doi!r}')
+        recid = m.group(1)
+        st, d = self._call('GET', f'/records/{recid}', auth=False)
+        if st == 200 and d.get('conceptrecid'):
+            return str(d['conceptrecid'])
+        return recid  # DOI suffix == recid for Zenodo; fall back to it
+
     # --- mutations -------------------------------------------------------
     def create_deposition(self, metadata=None):
         st, d = self._call('POST', '/deposit/depositions', data={'metadata': metadata or {}})
@@ -158,11 +170,15 @@ def github_release_date(repo, tag):
     return (d.get('published_at') or '')[:10]
 
 
-def lineage_related(continues_doi, repo, tag):
-    """Standard related_identifiers for a release version."""
-    rels = []
-    if continues_doi:
-        rels.append({'relation': 'continues', 'identifier': continues_doi, 'scheme': 'doi'})
+def with_lineage(related, continues_doi, repo, tag):
+    """Return related_identifiers with the per-tag GitHub supplement link set and,
+    if given and not already present, the `continues` lineage link — preserving any
+    other entries carried in from .zenodo.json or the inherited version."""
+    rels = [r for r in (related or [])
+            if not (r.get('relation') == 'isSupplementTo'
+                    and 'github.com' in str(r.get('identifier', '')))]
+    if continues_doi and not any(r.get('relation') == 'continues' for r in rels):
+        rels.insert(0, {'relation': 'continues', 'identifier': continues_doi, 'scheme': 'doi'})
     rels.append({'relation': 'isSupplementTo',
                  'identifier': f'https://github.com/{repo}/tree/{tag}', 'scheme': 'url'})
     return rels

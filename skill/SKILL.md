@@ -20,17 +20,25 @@ irreversible writes behind `--execute`.
 - Every mutating command is **dry-run by default**; add `--execute` to write.
   Published DOIs are permanent — always dry-run first and show the plan.
 
+## Standard files (no bespoke config)
+- **CITATION.cff** — source of truth for authors/citation; its top-level `doi:` is
+  the **concept DOI**, which tells the tool which record to write to.
+- **.zenodo.json** — the deposit metadata (creators, license, `related_identifiers`
+  incl. the `continues` lineage link). Generate from CITATION.cff with
+  `cffconvert -f zenodo -o .zenodo.json`, then hand-add `related_identifiers`.
+
+Run inside a repo that has both files and you can omit `--concept`/`--repo`.
+
 ## Common tasks
 - Check auth/ownership: `zenodo-maint verify-token`
-- List a concept's versions/dates: `zenodo-maint --concept <id> list-versions`
-- Is Zenodo behind GitHub? `zenodo-maint --concept <id> --repo <owner/repo> check-drift`
-- Archive one release: `zenodo-maint --concept <id> --repo <r> --continues <old-doi> archive-release --tag v9.66.0` (add `--execute`)
-- Backfill missed releases: build a JSON `[{"tag","date"}]`, then `... backfill --tags-file tags.json` (dry-run, then `--execute`)
-- Fix a relation on all versions: `zenodo-maint --concept <id> relink --from-relation isNewVersionOf --to-relation continues --execute`
-- Fix authors on all versions: `zenodo-maint --concept <id> set-authors --authors-file authors.json --execute`
+- List versions/dates: `zenodo-maint list-versions`
+- Is Zenodo behind GitHub? `zenodo-maint check-drift`
+- Archive one release: `zenodo-maint archive-release --tag v9.66.0` (add `--execute`)
+- Backfill missed releases: build a JSON `[{"tag","date"}]`, then `zenodo-maint backfill --tags-file tags.json` (dry-run, then `--execute`)
+- Rename a relation on all versions: `zenodo-maint relink --from-relation isNewVersionOf --to-relation continues --execute`
+- Re-apply metadata after editing `.zenodo.json` (e.g. authors): `zenodo-maint apply-metadata --execute`
 
-A repo's facts live in `zenodo.toml` (concept_recid, continues_doi, repo, authors_file),
-so inside a configured repo you can omit the flags.
+Outside a configured repo, pass `--concept`, `--repo`, `--citation`, `--zenodo-json`.
 
 ## Decision guidance (the judgment the CLI can't make)
 - **Can't access the original record's account?** Don't chase credentials — **fork**:

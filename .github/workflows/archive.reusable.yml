@@ -1,14 +1,13 @@
 name: Zenodo archive (reusable)
 
-# Reusable workflow: archive a published release as a new version of a Zenodo
-# concept record. Call it from a target repo:
+# Reusable workflow: archive a published release as a new version of the repo's
+# Zenodo concept record. Concept + metadata come from the repo's CITATION.cff and
+# .zenodo.json, so callers usually only pass the tag. Call it from a target repo:
 #
 #   jobs:
 #     archive:
 #       uses: <ORG>/zenodo-maint/.github/workflows/archive.reusable.yml@v1
 #       with:
-#         concept_recid: '21053715'
-#         continues_doi: '10.5281/zenodo.5057108'
 #         tag: ${{ github.event.release.tag_name }}
 #       secrets:
 #         ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
@@ -16,10 +15,8 @@ name: Zenodo archive (reusable)
 on:
   workflow_call:
     inputs:
-      concept_recid: { type: string, required: true }
       tag: { type: string, required: false, default: 'latest' }
-      continues_doi: { type: string, required: false, default: '' }
-      repo: { type: string, required: false, default: '' } # defaults to caller repo
+      concept_recid: { type: string, required: false, default: '' } # override CITATION.cff
       ref: { type: string, required: false, default: 'v1' } # zenodo-maint version
     secrets:
       ZENODO_TOKEN: { required: true }
@@ -31,6 +28,7 @@ jobs:
   archive:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4 # for CITATION.cff / .zenodo.json
       - name: Install zenodo-maint
         env:
           REF: ${{ inputs.ref }}
@@ -39,11 +37,9 @@ jobs:
         env:
           ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
           CONCEPT: ${{ inputs.concept_recid }}
-          REPO_IN: ${{ inputs.repo }}
-          CONTINUES: ${{ inputs.continues_doi }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          repo="${REPO_IN:-$GITHUB_REPOSITORY}"
-          zenodo-maint --concept "$CONCEPT" --repo "$repo" --continues "$CONTINUES" \
-            archive-release --tag "$TAG" --execute
+          global=()
+          [ -n "$CONCEPT" ] && global+=(--concept "$CONCEPT")
+          zenodo-maint "${global[@]}" archive-release --tag "$TAG" --execute

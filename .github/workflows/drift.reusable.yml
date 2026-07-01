@@ -1,24 +1,19 @@
 name: Zenodo drift check (reusable)
 
 # Reusable workflow: alert if the latest GitHub release isn't the latest version
-# on Zenodo. Reads only public APIs — no secrets required. Call it from a target
-# repo on a schedule:
+# on Zenodo. Concept comes from the repo's CITATION.cff. Reads only public APIs —
+# no secrets required. Call it from a target repo on a schedule:
 #
 #   on:
 #     schedule: [{ cron: '0 12 * * 1' }]
 #   jobs:
 #     drift:
 #       uses: <ORG>/zenodo-maint/.github/workflows/drift.reusable.yml@v1
-#       with:
-#         concept_recid: '21053715'
-#       permissions:
-#         issues: write
 
 on:
   workflow_call:
     inputs:
-      concept_recid: { type: string, required: true }
-      repo: { type: string, required: false, default: '' }
+      concept_recid: { type: string, required: false, default: '' } # override CITATION.cff
       ref: { type: string, required: false, default: 'v1' }
 
 permissions:
@@ -29,6 +24,7 @@ jobs:
   drift:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4 # for CITATION.cff
       - name: Install zenodo-maint
         env:
           REF: ${{ inputs.ref }}
@@ -37,11 +33,11 @@ jobs:
         id: check
         env:
           CONCEPT: ${{ inputs.concept_recid }}
-          REPO_IN: ${{ inputs.repo }}
         run: |
           set -uo pipefail
-          repo="${REPO_IN:-$GITHUB_REPOSITORY}"
-          if zenodo-maint --concept "$CONCEPT" --repo "$repo" check-drift; then
+          global=()
+          [ -n "$CONCEPT" ] && global+=(--concept "$CONCEPT")
+          if zenodo-maint "${global[@]}" check-drift; then
             echo "drift=false" >> "$GITHUB_OUTPUT"
           else
             echo "drift=true" >> "$GITHUB_OUTPUT"
