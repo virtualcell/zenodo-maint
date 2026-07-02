@@ -97,6 +97,15 @@ label from the source:
 Use `archive-release`/`backfill` to create such a record, or `apply-metadata
 --record <id>` to relabel and re-author one that already exists.
 
+**Reusing an already-archived tag.** By default (`--dedup-by tag`) a tag that is
+already archived is skipped — the conservative behavior for normal release
+archiving. A curated record often *reuses* a tag that already exists as a
+per-release record (e.g. a `7.7` record built from the already-archived
+`7.7.0.15`); pass **`--dedup-by label`** so the tool dedups on the version *label*
+instead. Idempotency holds in both modes: a matching label is always skipped, so
+re-running a curated mint never creates a duplicate — the mode only controls
+whether reusing an already-archived *tag* is allowed.
+
 ## Reusable workflows
 
 In a target repo, add a `ZENODO_TOKEN` secret (ideally an **org-level** secret)

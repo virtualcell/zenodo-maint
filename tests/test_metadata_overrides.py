@@ -6,7 +6,7 @@ Stdlib `unittest` only (the package is dependency-free by design). Run with:
 """
 import unittest
 
-from zenodo_maint.cli import _effective_version
+from zenodo_maint.cli import _effective_version, _skip_reason
 
 
 class EffectiveVersion(unittest.TestCase):
@@ -27,6 +27,32 @@ class EffectiveVersion(unittest.TestCase):
         base = {"version": "7.7"}
         self.assertEqual(_effective_version("8.0", base, True, "7.7.0.33"), "8.0")
         self.assertEqual(_effective_version("8.0", {}, False, "7.7.0.33"), "8.0")
+
+
+class SkipReason(unittest.TestCase):
+    # existing is keyed by version label; values are opaque records here
+    EX = {"7.7.0.15": {"id": 1}, "8.0": {"id": 2}}
+
+    def test_matching_label_skips_in_both_modes(self) -> None:
+        for mode in ("tag", "label"):
+            self.assertEqual(_skip_reason("8.0.0.06", "8.0", self.EX, mode), "label")
+
+    def test_tag_mode_skips_when_only_tag_exists(self) -> None:
+        # curated 7.7 reusing already-archived tag 7.7.0.15 -> conservative skip
+        self.assertEqual(_skip_reason("7.7.0.15", "7.7", self.EX, "tag"), "tag")
+
+    def test_label_mode_allows_tag_reuse(self) -> None:
+        # same case, label mode -> not skipped (curated record may reuse the tag)
+        self.assertIsNone(_skip_reason("7.7.0.15", "7.7", self.EX, "label"))
+
+    def test_plain_archive_skips_when_tag_equals_label_exists(self) -> None:
+        # normal flow: label == tag; a re-run is a safe no-op in both modes
+        for mode in ("tag", "label"):
+            self.assertEqual(_skip_reason("8.0", "8.0", self.EX, mode), "label")
+
+    def test_new_record_not_skipped(self) -> None:
+        for mode in ("tag", "label"):
+            self.assertIsNone(_skip_reason("9.9.9", "9.9.9", self.EX, mode))
 
 
 if __name__ == "__main__":
