@@ -6,7 +6,7 @@ Stdlib `unittest` only (the package is dependency-free by design). Run with:
 """
 import unittest
 
-from zenodo_maint.cli import _effective_version, _skip_reason
+from zenodo_maint.cli import _creators_equal, _effective_version, _skip_reason
 
 
 class EffectiveVersion(unittest.TestCase):
@@ -53,6 +53,25 @@ class SkipReason(unittest.TestCase):
     def test_new_record_not_skipped(self) -> None:
         for mode in ("tag", "label"):
             self.assertIsNone(_skip_reason("9.9.9", "9.9.9", self.EX, mode))
+
+
+class CreatorsEqual(unittest.TestCase):
+    A = [{"name": "Schaff, James C.", "affiliation": "UConn", "orcid": "0000-0003-3286-7736"},
+         {"name": "Moraru, Ion I.", "affiliation": "UConn"}]
+
+    def test_identical(self) -> None:
+        self.assertTrue(_creators_equal(self.A, list(self.A)))
+
+    def test_order_matters(self) -> None:
+        self.assertFalse(_creators_equal(self.A, list(reversed(self.A))))
+
+    def test_raw_github_dump_differs(self) -> None:
+        raw = [{"name": "Jim Schaff"}, {"name": "vcfrmgit"}]
+        self.assertFalse(_creators_equal(raw, self.A))
+
+    def test_orcid_change_differs(self) -> None:
+        b = [dict(self.A[0], orcid=None), self.A[1]]
+        self.assertFalse(_creators_equal(self.A, b))
 
 
 if __name__ == "__main__":

@@ -89,6 +89,15 @@ def _skip_reason(
     return None
 
 
+def _creators_equal(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> bool:
+    """Order-sensitive comparison of two creator lists on the fields we set
+    (name, affiliation, orcid). Used to skip records already carrying the target
+    authors so --creators-only is idempotent and cheap to re-run."""
+    def key(cs: list[dict[str, Any]]) -> list[tuple[Any, Any, Any]]:
+        return [(c.get("name"), c.get("affiliation"), c.get("orcid")) for c in cs]
+    return key(a) == key(b)
+
+
 # --- commands -----------------------------------------------------------
 def cmd_verify_token(args: argparse.Namespace) -> None:
     cli = _client(args)
@@ -241,11 +250,44 @@ def cmd_apply_metadata(args: argparse.Namespace) -> None:
     cli = _client(args)
     concept, repo = _concept(cli, args), _repo(args)
     targets = [cli.get(args.record)] if args.record else cli.concept_versions(concept)
+    if args.version_prefix:
+        targets = [x for x in targets
+                   if str(x["metadata"].get("version", "")).startswith(args.version_prefix)]
+    mode = "EXECUTE" if args.execute else "DRY-RUN"
+
+    # --creators-only: swap just the creators list on each record, preserving its
+    # title/description/version/date/related_identifiers. Skip records already
+    # carrying the target authors (idempotent). Use with --version-prefix to fix a
+    # whole major's per-release records without touching their release notes.
+    if args.creators_only:
+        want = zj.get("creators", [])
+        if not want:
+            sys.exit("--creators-only needs a non-empty 'creators' list in the metadata file")
+        print(f"{mode} set creators only ({len(want)} authors) on {len(targets)} record(s)")
+        changed = same = 0
+        for x in targets:
+            ver = x["metadata"].get("version")
+            cur = x["metadata"].get("creators", [])
+            if _creators_equal(cur, want):
+                same += 1
+                continue
+            changed += 1
+            if not args.execute:
+                print(f"  {ver}: would set creators ({len(cur)} -> {len(want)})")
+                continue
+            md = dict(cli.edit(x["id"])["metadata"])  # current metadata; preserve all
+            md["creators"] = want
+            cli.set_metadata(x["id"], md)
+            cli.publish(x["id"])
+            print(f"  {ver}: creators updated ({len(cur)} -> {len(want)})")
+        print(f"  ({changed} {'updated' if args.execute else 'to update'}, "
+              f"{same} already correct)")
+        return
+
     if (args.version or args.title) and not args.record:
         print("  ! --version/--title relabel every targeted record; "
               "pair with --record <id> to relabel just one")
-    print(f'{"EXECUTE" if args.execute else "DRY-RUN"} apply {args.zenodo_json} '
-          f"to {len(targets)} record(s)")
+    print(f'{mode} apply {args.zenodo_json} to {len(targets)} record(s)')
     for x in targets:
         ver = x["metadata"].get("version")
         # Preserve each record's own version/date unless explicitly overridden, so
@@ -420,6 +462,11 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--record", help="limit to a single deposition id")
     m.add_argument("--version", help="relabel the record's version (use with --record)")
     m.add_argument("--title", help="relabel the record's title (use with --record)")
+    m.add_argument("--creators-only", action="store_true",
+                   help="replace only the creators list (keep title/description/"
+                        "version/date); skips records whose creators already match")
+    m.add_argument("--version-prefix",
+                   help="limit to records whose version label starts with this prefix")
     m.set_defaults(func=cmd_apply_metadata)
 
     bs = sub.add_parser("bootstrap", help="scaffold CITATION.cff and .zenodo.json")

@@ -68,6 +68,12 @@ zenodo-maint apply-metadata --execute
 zenodo-maint --zenodo-json meta/v9.json \
   apply-metadata --record 1234567 --version 9 --title 'MyProject 9' --execute
 
+# fix ONLY the author list on many records, preserving each one's title/description
+# (e.g. correct authorship without touching per-release notes). --version-prefix
+# scopes to a subset; already-correct records are skipped (idempotent).
+zenodo-maint --zenodo-json meta/authors-9.json \
+  apply-metadata --creators-only --version-prefix 9. --execute
+
 # scaffold the two standard files for a new repo
 zenodo-maint --repo owner/repo bootstrap
 
