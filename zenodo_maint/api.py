@@ -26,6 +26,13 @@ from typing import Any
 PROD = "https://zenodo.org/api"
 SANDBOX = "https://sandbox.zenodo.org/api"
 
+# Socket timeout (seconds) for every request. Zenodo occasionally leaves a
+# connection open after a write without sending the response, which would hang an
+# unbounded run forever; a timeout turns that into a retriable/resumable error.
+# It's a per-blocking-operation timeout, so active large uploads (data still
+# flowing) are unaffected — only genuine stalls trip it.
+REQUEST_TIMEOUT = 120
+
 Json = Any
 Metadata = dict[str, Any]
 
@@ -70,7 +77,7 @@ class ZenodoClient:
         attempts = 4 if method == "GET" else 1
         for i in range(attempts):
             try:
-                with urllib.request.urlopen(req) as r:
+                with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
                     c = r.read()
                     return int(r.status), (json.loads(c) if c and parse else c)
             except urllib.error.HTTPError as e:
@@ -204,7 +211,7 @@ def public_get(path: str, sandbox: bool = False) -> tuple[int, Any]:
     url = path if path.startswith("http") else base + path
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req) as r:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
             return int(r.status), json.loads(r.read())
     except urllib.error.HTTPError as e:
         return int(e.code), e.read().decode(errors="replace")
@@ -285,13 +292,13 @@ def github_webhooks(repo: str, token: str) -> list[dict[str, Any]]:
         f"https://api.github.com/repos/{repo}/hooks",
         headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(req) as r:
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
         return list(json.loads(r.read()))
 
 
 def _gh(url: str) -> dict[str, Any]:
     req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(req) as r:
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
         return dict(json.loads(r.read()))
 
 
