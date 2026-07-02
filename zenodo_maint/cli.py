@@ -57,21 +57,6 @@ def _repo(args: argparse.Namespace) -> str:
     return str(repo)
 
 
-def _base_metadata(
-    args: argparse.Namespace, inherited: dict[str, Any]
-) -> tuple[dict[str, Any], bool]:
-    """Deposit metadata base and whether it came from a committed .zenodo.json.
-
-    Returns (metadata, from_file): the committed .zenodo.json if present (from_file
-    True), else the metadata inherited from the previous version (from_file False).
-    The flag lets callers tell an intentional file-supplied `version` apart from the
-    previous release's `version` that rides along on an inherited draft."""
-    zj = sources.read_zenodo_json(args.zenodo_json)
-    if zj:
-        return dict(zj), True
-    return dict(inherited), False
-
-
 def _effective_version(
     override: str | None, base: dict[str, Any], from_file: bool, tag: str
 ) -> str:
@@ -84,6 +69,24 @@ def _effective_version(
     if from_file and base.get("version"):
         return str(base["version"])
     return tag
+
+
+def _skip_reason(
+    tag: str, label: str, existing: dict[str, Any], dedup_by: str
+) -> str | None:
+    """Why (if at all) to skip archiving this tag, given the concept's existing
+    versions (keyed by version label). Returns 'label', 'tag', or None.
+
+    A matching version LABEL is always a skip — that guarantees idempotency in both
+    modes (re-running a mint never makes a duplicate). In the default 'tag' mode we
+    additionally skip if the source TAG is already archived under some other label
+    (conservative: don't reuse an archived tag). 'label' mode drops that extra check,
+    so a curated record can reuse an already-archived tag."""
+    if label in existing:
+        return "label"
+    if dedup_by == "tag" and tag in existing:
+        return "tag"
+    return None
 
 
 # --- commands -----------------------------------------------------------
@@ -133,27 +136,35 @@ def _archive_one(
     # GitHub supplement link always track the real `tag`. Creators/description come
     # from --zenodo-json (too large for flags), so a curated record supplies those
     # via a per-record metadata file.
-    label = version or tag
-    if tag in existing or (label != tag and label in existing):
-        hit = existing.get(tag) or existing[label]
-        print(f'  {tag}: already archived (id {hit["id"]}) — skip')
+    #
+    # Dedup strategy is chosen by --dedup-by (see _skip_reason): the default skips on
+    # the source tag; 'label' skips only on the resolved version label, so a curated
+    # record (e.g. version "7.7") may reuse a tag ("7.7.0.15") already archived as a
+    # per-release record. The label always identifies the record we create.
+    zj = sources.read_zenodo_json(args.zenodo_json)
+    from_file = zj is not None
+    label = _effective_version(version, zj or {}, from_file, tag)
+    reason = _skip_reason(tag, label, existing, args.dedup_by)
+    if reason == "label":
+        print(f'  {tag}: version {label!r} already archived '
+              f'(id {existing[label]["id"]}) — skip')
+        return
+    if reason == "tag":
+        print(f'  {tag}: tag already archived (id {existing[tag]["id"]}); pass '
+              f'--dedup-by label to add curated version {label!r} — skip')
         return
     if not args.execute:
-        extra = []
-        if version:
-            extra.append(f"version '{version}'")
+        note = f" as version {label!r}" if label != tag else ""
         if title:
-            extra.append(f"title '{title}'")
-        note = f" as {', '.join(extra)}" if extra else ""
-        print(f"  {tag} ({date}): DRY-RUN — would add as new version of concept "
-              f"{concept}{note}")
+            note += f"{',' if note else ' as'} title {title!r}"
+        print(f"  {tag} ({date}): DRY-RUN — would add to concept {concept}{note}")
         return
     latest = cli.latest_version(concept)
     tar = api.github_tarball(repo, tag, workdir)
     draft = cli.new_version(latest["id"])
     cli.replace_files(draft, tar)
-    md, from_file = _base_metadata(args, draft["metadata"])
-    md["version"] = _effective_version(version, md, from_file, tag)
+    md = dict(zj) if zj is not None else dict(draft["metadata"])
+    md["version"] = label
     if title:
         md["title"] = title
     md["publication_date"] = date
@@ -372,6 +383,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--continues", help='DOI to link via "continues" if not already in metadata')
     p.add_argument("--allow-concept", action="append",
                    help="concept id to treat as expected in doctor (repeatable)")
+    p.add_argument("--dedup-by", choices=["tag", "label"], default="tag",
+                   help="skip a record if its source tag (default) or only its "
+                        "version label is already archived; use 'label' for curated "
+                        "records that deliberately reuse an already-archived tag")
     p.add_argument("--zenodo-json", default=".zenodo.json", help="deposit metadata file")
     p.add_argument("--citation", default="CITATION.cff", help="citation file (concept DOI + repo)")
     p.add_argument("--execute", action="store_true", help="actually write (default: dry run)")
