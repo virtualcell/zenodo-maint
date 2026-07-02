@@ -13,9 +13,11 @@ responsible for the --dry-run / --execute gate.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -62,12 +64,23 @@ class ZenodoClient:
         if not url.startswith("http"):
             url = self.base + url
         req = urllib.request.Request(url, data=body, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(req) as r:
-                c = r.read()
-                return int(r.status), (json.loads(c) if c and parse else c)
-        except urllib.error.HTTPError as e:
-            return int(e.code), e.read().decode(errors="replace")
+        # Retry only idempotent GETs on transient network faults (truncated reads,
+        # connection resets). Never auto-retry a write: a 504 can mask a successful
+        # write, so a blind retry could double-create.
+        attempts = 4 if method == "GET" else 1
+        for i in range(attempts):
+            try:
+                with urllib.request.urlopen(req) as r:
+                    c = r.read()
+                    return int(r.status), (json.loads(c) if c and parse else c)
+            except urllib.error.HTTPError as e:
+                return int(e.code), e.read().decode(errors="replace")
+            except (http.client.IncompleteRead, urllib.error.URLError,
+                    ConnectionError, TimeoutError):
+                if i == attempts - 1:
+                    raise
+                time.sleep(1.5 * (i + 1))
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     def _expect(self, ok: tuple[int, ...], status: int, payload: Json, what: str) -> Json:
         if status not in ok:
@@ -84,11 +97,27 @@ class ZenodoClient:
         return list(self._expect((200,), st, d, "list owned depositions"))
 
     def concept_versions(self, concept_recid: str) -> list[dict[str, Any]]:
-        """All published depositions in a concept, oldest->newest by created."""
+        """All published depositions in a concept, oldest->newest by created.
+
+        Paginates: the deposit search caps size at 100, so a concept with more than
+        100 versions needs every page — otherwise dedup and latest_version see only
+        a slice and could miss existing records (→ duplicate archives)."""
         q = urllib.parse.quote(f"conceptrecid:{concept_recid}")
-        st, d = self._call("GET", f"/deposit/depositions?q={q}&all_versions=true&size=100")
-        self._expect((200,), st, d, "list concept versions")
-        pub = [x for x in d if x.get("submitted")]
+        out: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            st, d = self._call(
+                "GET",
+                f"/deposit/depositions?q={q}&all_versions=true&size=100&page={page}",
+            )
+            self._expect((200,), st, d, "list concept versions")
+            if not d:
+                break
+            out.extend(d)
+            if len(d) < 100:
+                break
+            page += 1
+        pub = [x for x in out if x.get("submitted")]
         pub.sort(key=lambda x: x.get("created", ""))
         return pub
 
