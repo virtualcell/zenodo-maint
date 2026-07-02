@@ -265,6 +265,7 @@ def cmd_apply_metadata(args: argparse.Namespace) -> None:
             sys.exit("--creators-only needs a non-empty 'creators' list in the metadata file")
         print(f"{mode} set creators only ({len(want)} authors) on {len(targets)} record(s)")
         changed = same = 0
+        failed: list[tuple[str, str]] = []
         for x in targets:
             ver = x["metadata"].get("version")
             cur = x["metadata"].get("creators", [])
@@ -275,13 +276,23 @@ def cmd_apply_metadata(args: argparse.Namespace) -> None:
             if not args.execute:
                 print(f"  {ver}: would set creators ({len(cur)} -> {len(want)})")
                 continue
-            md = dict(cli.edit(x["id"])["metadata"])  # current metadata; preserve all
-            md["creators"] = want
-            cli.set_metadata(x["id"], md)
-            cli.publish(x["id"])
-            print(f"  {ver}: creators updated ({len(cur)} -> {len(want)})")
+            # Continue past a record Zenodo rejects (e.g. a pre-existing invalid
+            # field it re-validates on submit) so one bad record can't block a batch.
+            try:
+                md = dict(cli.edit(x["id"])["metadata"])  # current metadata; preserve all
+                md["creators"] = want
+                cli.set_metadata(x["id"], md)
+                cli.publish(x["id"])
+                print(f"  {ver}: creators updated ({len(cur)} -> {len(want)})")
+            except api.ZenodoError as e:
+                changed -= 1
+                failed.append((str(ver), str(e)))
+                print(f"  {ver}: FAILED (id {x['id']}) — {e}")
         print(f"  ({changed} {'updated' if args.execute else 'to update'}, "
-              f"{same} already correct)")
+              f"{same} already correct, {len(failed)} failed)")
+        if failed:
+            sys.exit(f"{len(failed)} record(s) could not be updated: "
+                     + ", ".join(v for v, _ in failed))
         return
 
     if (args.version or args.title) and not args.record:
