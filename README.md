@@ -77,6 +77,11 @@ zenodo-maint --zenodo-json meta/authors-9.json \
 # scaffold the two standard files for a new repo
 zenodo-maint --repo owner/repo bootstrap
 
+# fork: mint a NEW concept from a tag (e.g. when the original concept's account is
+# inaccessible), linking the old lineage via --continues. Prints the new concept id.
+zenodo-maint --repo owner/repo --continues 10.5281/zenodo.5058109 \
+  --zenodo-json meta/fork.json create-concept --tag latest --execute
+
 # preflight: detect a native-integration conflict, competing concepts, or drift
 GH_TOKEN=$(gh auth token) zenodo-maint doctor
 ```

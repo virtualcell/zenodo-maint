@@ -203,6 +203,53 @@ def cmd_archive_release(args: argparse.Namespace) -> None:
                      version=args.version, title=args.title)
 
 
+def cmd_create_concept(args: argparse.Namespace) -> None:
+    """Create a brand-new Zenodo concept from a release tag (the first version).
+
+    Unlike archive-release/backfill (which add a version to an existing concept),
+    this mints a fresh concept — the fork case: create a new concept under an
+    account you control and link the old lineage with --continues. Metadata
+    (creators, title, description, license) comes from --zenodo-json; the new
+    concept id is printed for CITATION.cff."""
+    zj = sources.read_zenodo_json(args.zenodo_json)
+    if not zj:
+        sys.exit("create-concept needs --zenodo-json with the deposit metadata")
+    cli = _client(args)
+    repo = _repo(args)
+    tag, date = args.tag, args.date
+    if tag == "latest":
+        tag, latest_date = api.latest_github_release(repo)
+        date = date or latest_date
+    elif not date:
+        date = api.github_release_date(repo, tag)
+    if not date:
+        sys.exit("could not determine publication date; pass --date YYYY-MM-DD")
+    label = args.version or str(zj.get("version") or tag)
+    cont = f", continues {args.continues}" if args.continues else ""
+    if not args.execute:
+        print(f"DRY-RUN — would CREATE a new concept from {repo}@{tag} ({date}) "
+              f"as version {label!r}{cont}")
+        return
+    with tempfile.TemporaryDirectory() as wd:
+        tar = api.github_tarball(repo, tag, wd)
+        md = dict(zj)
+        md["version"] = label
+        if args.title:
+            md["title"] = args.title
+        md["publication_date"] = date
+        md["related_identifiers"] = api.with_lineage(
+            md.get("related_identifiers"), args.continues, repo, tag)
+        md.setdefault("upload_type", "software")
+        dep = cli.create_deposition()          # empty draft → fresh concept
+        cli.replace_files(dep, tar)            # upload the release tarball
+        cli.set_metadata(dep["id"], md)        # full metadata (validated here)
+        r = cli.publish(dep["id"])
+        cid = r.get("conceptrecid")
+        print(f"CREATED concept {cid}: version {label} -> {r['metadata'].get('doi')}")
+        print(f"  concept DOI: 10.5281/zenodo.{cid}  "
+              f"(put this in the new repo's CITATION.cff doi:)")
+
+
 def cmd_backfill(args: argparse.Namespace) -> None:
     cli = _client(args)
     concept, repo = _concept(cli, args), _repo(args)
@@ -457,6 +504,14 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--version", help="version label for the record (default: the tag)")
     a.add_argument("--title", help="title for the record (default: from --zenodo-json)")
     a.set_defaults(func=cmd_archive_release)
+
+    cc = sub.add_parser("create-concept",
+                        help="mint a NEW concept from a tag (fork case; use --continues)")
+    cc.add_argument("--tag", required=True, help='release tag, or "latest"')
+    cc.add_argument("--date", help="publication date YYYY-MM-DD (default: from the release)")
+    cc.add_argument("--version", help="version label (default: from --zenodo-json, else tag)")
+    cc.add_argument("--title", help="title for the record (default: from --zenodo-json)")
+    cc.set_defaults(func=cmd_create_concept)
 
     b = sub.add_parser("backfill", help="archive many tags from a JSON list")
     b.add_argument("--tags-file", required=True,
