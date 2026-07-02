@@ -53,8 +53,7 @@ passed via `--allow-concept`.
 
 ## Decision guidance (the judgment the CLI can't make)
 - **Can't access the original record's account?** Don't chase credentials — **fork**:
-  create a new concept under an account you control, backfill into it, and link the
-  old lineage with a `continues` relation. The old DOI stays a frozen citable snapshot.
+  `zenodo-maint --repo owner/repo --continues <old-concept-doi> --zenodo-json meta.json create-concept --tag latest --execute` mints a NEW concept under an account you control (metadata/authors from `--zenodo-json`, lineage via `--continues`), and prints the new concept id for the repo's CITATION.cff. Backfill more versions into it with `archive-release --concept <new-id>` if wanted. The old DOI stays a frozen citable snapshot.
 - **Authorship**: reflect real contributors; PIs (often 0 commits) conventionally go
   last. Keep the same author list across all versions of a concept (inherited
   automatically on new versions). Backfilled records can't change their *deposit* date
