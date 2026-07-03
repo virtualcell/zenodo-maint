@@ -46,6 +46,12 @@ zenodo-maint list-owned --repo-only --json  # machine-readable; only GitHub-link
 zenodo-maint list-versions                 # concept from CITATION.cff doi:
 zenodo-maint check-drift                    # repo from CITATION.cff / $GITHUB_REPOSITORY
 
+# audit repo wiring: standard files present, reusable workflows pinned at the
+# floating @vN so they track updates, .zenodo.json consistent with the record.
+# Tokenless, but set $GH_TOKEN to beat GitHub's 60-req/hour unauthenticated limit.
+GH_TOKEN=$(gh auth token) zenodo-maint audit                          # one repo
+GH_TOKEN=$(gh auth token) zenodo-maint audit --monitored monitored.json  # many
+
 # archive one release (metadata from .zenodo.json; date auto-resolved from GitHub)
 zenodo-maint archive-release --tag v9.66.0 --execute
 

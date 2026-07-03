@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable
 from typing import Any
 
 PROD = "https://zenodo.org/api"
@@ -384,6 +385,67 @@ def github_release_date(repo: str, tag: str) -> str:
     """Publication date (YYYY-MM-DD) of a specific release tag."""
     d = _gh(f"https://api.github.com/repos/{repo}/releases/tags/{tag}")
     return (d.get("published_at") or "")[:10]
+
+
+def _github_headers(token: str | None, accept: str) -> dict[str, str]:
+    h = {"Accept": accept}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def github_file(repo: str, path: str, token: str | None = None) -> str | None:
+    """Raw contents of a file on a repo's default branch, or None if it's absent
+    (404). Public; a token is optional but recommended — the unauthenticated GitHub
+    API allows only 60 requests/hour, which a multi-repo audit blows through fast."""
+    url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path)}"
+    req = urllib.request.Request(
+        url, headers=_github_headers(token, "application/vnd.github.raw"))
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+            data: bytes = r.read()
+            return data.decode(errors="replace")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+
+
+def github_dir(repo: str, path: str, token: str | None = None) -> list[str]:
+    """Filenames directly under a repo directory (default branch); [] if the
+    directory is absent. Public; token optional (see github_file on rate limits)."""
+    url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(path)}"
+    req = urllib.request.Request(
+        url, headers=_github_headers(token, "application/vnd.github+json"))
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return []
+        raise
+    return [str(x.get("name", "")) for x in data] if isinstance(data, list) else []
+
+
+_REUSABLE_WORKFLOW_RE = re.compile(
+    r"zenodo-maint/\.github/workflows/(archive|drift)\.reusable\.yml@(\S+)")
+
+
+def reusable_refs(workflow_texts: Iterable[str]) -> dict[str, str | None]:
+    """The git ref each zenodo-maint reusable workflow is pinned at, across the given
+    workflow file contents: {'archive': ref|None, 'drift': ref|None}. None means the
+    repo doesn't call that reusable workflow at all. Pure — no I/O."""
+    out: dict[str, str | None] = {"archive": None, "drift": None}
+    for text in workflow_texts:
+        for kind, ref in _REUSABLE_WORKFLOW_RE.findall(text):
+            out[kind] = ref.strip().strip("\"'")
+    return out
+
+
+def is_major_pin(ref: str | None) -> bool:
+    """True if a workflow ref is a floating major tag (vN) — the only pin that keeps
+    tracking minor/patch updates. A full vX.Y.Z, a commit SHA, or a branch does not."""
+    return ref is not None and re.fullmatch(r"v\d+", ref) is not None
 
 
 def with_lineage(
