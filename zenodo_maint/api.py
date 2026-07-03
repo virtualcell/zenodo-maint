@@ -103,6 +103,24 @@ class ZenodoClient:
         st, d = self._call("GET", f"/deposit/depositions?size={size}&sort=mostrecent")
         return list(self._expect((200,), st, d, "list owned depositions"))
 
+    def owned_records_all(self, page_size: int = 100) -> list[dict[str, Any]]:
+        """Every deposition the token's account owns, across all pages. Unlike
+        owned_records(), this walks the full result set so accounts with many
+        records aren't silently truncated. Callers dedupe by concept as needed."""
+        out: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            st, d = self._call(
+                "GET", f"/deposit/depositions?size={page_size}&page={page}&sort=mostrecent")
+            self._expect((200,), st, d, "list owned depositions")
+            if not d:
+                break
+            out.extend(d)
+            if len(d) < page_size:
+                break
+            page += 1
+        return out
+
     def concept_versions(self, concept_recid: str) -> list[dict[str, Any]]:
         """All published depositions in a concept, oldest->newest by created.
 
@@ -248,6 +266,24 @@ def concept_ids_in_related(metadata: dict[str, Any]) -> set[str]:
         if m:
             out.add(m.group(1))
     return out
+
+
+def repo_from_related(metadata: dict[str, Any]) -> str | None:
+    """Extract GitHub 'owner/repo' from a record's related_identifiers — the
+    `isSupplementTo` github.com link the archiver sets on every version. Returns
+    None if the record has no GitHub link (e.g. a non-software deposit)."""
+    for r in metadata.get("related_identifiers", []) or []:
+        ident = str(r.get("identifier", ""))
+        idx = ident.find("github.com/")
+        if idx < 0:
+            continue
+        path = ident[idx + len("github.com/"):].split("#")[0].split("?")[0].strip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            return f"{parts[0]}/{parts[1]}"
+    return None
 
 
 def _identifier_is_repo(identifier: str, repo: str) -> bool:

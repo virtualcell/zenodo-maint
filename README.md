@@ -41,6 +41,8 @@ you can omit `--concept`/`--repo` entirely:
 
 ```bash
 zenodo-maint verify-token
+zenodo-maint list-owned                     # every concept/DOI this account owns + source repo
+zenodo-maint list-owned --repo-only --json  # machine-readable; only GitHub-linked records
 zenodo-maint list-versions                 # concept from CITATION.cff doi:
 zenodo-maint check-drift                    # repo from CITATION.cff / $GITHUB_REPOSITORY
 
