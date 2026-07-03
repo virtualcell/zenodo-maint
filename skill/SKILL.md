@@ -29,6 +29,30 @@ irreversible writes behind `--execute`.
 
 Run inside a repo that has both files and you can omit `--concept`/`--repo`.
 
+## Onboarding a new repo (the full sequence)
+`bootstrap` is **only step 1** — it scaffolds the two files locally and makes no
+Zenodo calls, mints no concept, and installs no workflows. The rest is manual:
+
+1. **Scaffold** — `zenodo-maint --repo owner/repo bootstrap` writes starter
+   `CITATION.cff` + `.zenodo.json` (TODO authors, MIT license, no DOI yet).
+2. **Fill authors** in `CITATION.cff`, then sync metadata:
+   `cffconvert -f zenodo -o .zenodo.json` and hand-add `related_identifiers`
+   (incl. any `continues` lineage link).
+3. **Get the concept DOI** — it doesn't exist until the first archive. Either
+   `archive-release --tag <first> --execute` (archives into a fresh concept), or
+   for a fork mint one explicitly with `create-concept` (see Decision guidance).
+4. **Record the concept DOI** — paste the returned concept DOI into
+   `CITATION.cff`'s top-level `doi:` so later commands resolve the record.
+5. **Install the workflows** — copy the two thin caller YAMLs from the repo
+   README into `.github/workflows/` (`archive.reusable.yml@v1` on release +
+   `drift.reusable.yml@v1` on a schedule); add the `ZENODO_TOKEN` secret
+   (ideally org-level).
+6. **Disable the native Zenodo↔GitHub integration** and confirm with
+   `GH_TOKEN=$(gh auth token) zenodo-maint doctor` (no webhook, no competing
+   concept, no drift).
+7. **(optional) Add to central monitoring** — append `{repo, concept}` to this
+   repo's `monitored.json`.
+
 ## Common tasks
 - Check auth/ownership: `zenodo-maint verify-token`
 - List every concept/DOI this account owns (+ source repo): `zenodo-maint list-owned` (add `--repo-only` for GitHub-linked only, `--json` for machine output). Authoritative answer to "which repos are actually tracked in Zenodo?" — read from Zenodo, not a hand-kept list.
