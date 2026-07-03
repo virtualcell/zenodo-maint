@@ -78,3 +78,14 @@ thin callers (see README). `monitor.yml` checks every repo in `monitored.json`
 (a `{repo, concept}` matrix) on a schedule and opens tracking issues on drift —
 tokenless (public APIs only). Add a monitored repo by appending to
 `monitored.json`.
+
+## Releasing
+
+Consumers pin the reusable workflows at `uses: …@vN` (a floating **major** tag).
+For that to deliver minor/patch updates, `vN` must point at the latest `vN.M.P`.
+This is now **automated**: pushing a stable `vX.Y.Z` tag triggers
+`move-major-tag.yml`, which force-moves the matching `vN` tag to that release
+(prereleases like `v1.2.3-rc1` are skipped). So a release is just:
+`git tag -a vX.Y.Z -m '…' && git push origin vX.Y.Z` — do **not** hand-move `vN`;
+the workflow does it. (Historically this force-move was manual; a missed move
+silently freezes every `@vN` consumer, which is why it's automated.)
