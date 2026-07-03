@@ -6,7 +6,12 @@ Stdlib `unittest` only (the package is dependency-free by design). Run with:
 """
 import unittest
 
-from zenodo_maint.cli import _creators_equal, _effective_version, _skip_reason
+from zenodo_maint.cli import (
+    _creators_equal,
+    _effective_version,
+    _license_equal,
+    _skip_reason,
+)
 
 
 class EffectiveVersion(unittest.TestCase):
@@ -72,6 +77,32 @@ class CreatorsEqual(unittest.TestCase):
     def test_orcid_change_differs(self) -> None:
         b = [dict(self.A[0], orcid=None), self.A[1]]
         self.assertFalse(_creators_equal(self.A, b))
+
+
+class LicenseEqual(unittest.TestCase):
+    """License equality for apply-metadata --license-only idempotency. The deposit
+    API returns a bare string; the records API wraps it as {'id': ...}."""
+
+    def test_string_forms(self) -> None:
+        self.assertTrue(_license_equal("mit", "mit"))
+        self.assertFalse(_license_equal("cc-by-4.0", "mit"))
+
+    def test_case_insensitive(self) -> None:
+        self.assertTrue(_license_equal("MIT", "mit"))
+
+    def test_dict_id_form(self) -> None:
+        self.assertTrue(_license_equal({"id": "mit"}, "mit"))
+        self.assertFalse(_license_equal({"id": "other-open"}, "mit"))
+
+    def test_zenodo_mit_license_suffix(self) -> None:
+        # Zenodo stores MIT as the deposit id "mit-license"; .zenodo.json writes "mit"
+        self.assertTrue(_license_equal({"id": "mit-license"}, "mit"))
+        self.assertTrue(_license_equal("mit-license", "mit"))
+        self.assertFalse(_license_equal("cc-by-4.0", "mit"))
+
+    def test_missing(self) -> None:
+        self.assertFalse(_license_equal(None, "mit"))
+        self.assertTrue(_license_equal(None, ""))
 
 
 if __name__ == "__main__":

@@ -82,6 +82,11 @@ zenodo-maint --zenodo-json meta/v9.json \
 zenodo-maint --zenodo-json meta/authors-9.json \
   apply-metadata --creators-only --version-prefix 9. --execute
 
+# fix ONLY the license across every version (e.g. a mis-declared license), leaving
+# each record's curated title/description/creators untouched; already-correct
+# records are skipped (idempotent).
+zenodo-maint --zenodo-json .zenodo.json apply-metadata --license-only --execute
+
 # scaffold the two standard files for a new repo
 zenodo-maint --repo owner/repo bootstrap
 

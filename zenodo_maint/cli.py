@@ -89,6 +89,29 @@ def _skip_reason(
     return None
 
 
+def _license_str(lic: Any) -> str:
+    """A license as a comparable string, tolerating the deposit API's bare-string
+    form and the records API's {'id': ...} shape."""
+    if isinstance(lic, dict):
+        return str(lic.get("id", ""))
+    return str(lic or "")
+
+
+def _license_norm(lic: Any) -> str:
+    """Normalized license id for comparison. Lowercases and strips Zenodo's
+    ``-license`` suffix so the deposit id it stores (``mit-license``) matches the
+    SPDX-style id humans write in .zenodo.json (``mit``)."""
+    s = _license_str(lic).lower()
+    return s[:-len("-license")] if s.endswith("-license") else s
+
+
+def _license_equal(a: Any, b: Any) -> bool:
+    """License equality across the string / {'id': ...} forms and Zenodo's
+    ``mit`` vs ``mit-license`` asymmetry. Used to skip records already carrying the
+    target license so --license-only is idempotent."""
+    return _license_norm(a) == _license_norm(b)
+
+
 def _creators_equal(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> bool:
     """Order-sensitive comparison of two creator lists on the fields we set
     (name, affiliation, orcid). Used to skip records already carrying the target
@@ -370,6 +393,44 @@ def cmd_apply_metadata(args: argparse.Namespace) -> None:
                 cli.set_metadata(x["id"], md)
                 cli.publish(x["id"])
                 print(f"  {ver}: creators updated ({len(cur)} -> {len(want)})")
+            except api.ZenodoError as e:
+                changed -= 1
+                failed.append((str(ver), str(e)))
+                print(f"  {ver}: FAILED (id {x['id']}) — {e}")
+        print(f"  ({changed} {'updated' if args.execute else 'to update'}, "
+              f"{same} already correct, {len(failed)} failed)")
+        if failed:
+            sys.exit(f"{len(failed)} record(s) could not be updated: "
+                     + ", ".join(v for v, _ in failed))
+        return
+
+    # --license-only: swap just the license on each record, preserving everything
+    # else (title/description/creators/version/date/related_identifiers). For fixing
+    # a mis-declared license across a concept without disturbing curated per-version
+    # titles — the license-side sibling of --creators-only.
+    if args.license_only:
+        want = zj.get("license")
+        if not want:
+            sys.exit("--license-only needs a 'license' in the metadata file")
+        print(f"{mode} set license only ({want!r}) on {len(targets)} record(s)")
+        changed = same = 0
+        failed = []
+        for x in targets:
+            ver = x["metadata"].get("version")
+            cur = x["metadata"].get("license")
+            if _license_equal(cur, want):
+                same += 1
+                continue
+            changed += 1
+            if not args.execute:
+                print(f"  {ver}: would set license ({_license_str(cur)} -> {want})")
+                continue
+            try:
+                md = dict(cli.edit(x["id"])["metadata"])  # current metadata; preserve all
+                md["license"] = want
+                cli.set_metadata(x["id"], md)
+                cli.publish(x["id"])
+                print(f"  {ver}: license updated ({_license_str(cur)} -> {want})")
             except api.ZenodoError as e:
                 changed -= 1
                 failed.append((str(ver), str(e)))
@@ -683,6 +744,9 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--creators-only", action="store_true",
                    help="replace only the creators list (keep title/description/"
                         "version/date); skips records whose creators already match")
+    m.add_argument("--license-only", action="store_true",
+                   help="replace only the license (keep title/description/creators/"
+                        "version/date); skips records whose license already matches")
     m.add_argument("--version-prefix",
                    help="limit to records whose version label starts with this prefix")
     m.set_defaults(func=cmd_apply_metadata)
