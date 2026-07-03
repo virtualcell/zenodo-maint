@@ -235,16 +235,6 @@ def public_get(path: str, sandbox: bool = False) -> tuple[int, Any]:
         return int(e.code), e.read().decode(errors="replace")
 
 
-def public_latest_version(concept_recid: str, sandbox: bool = False) -> str | None:
-    """Latest published version string for a concept — public, no token. Fetching
-    the concept record id follows redirects to the latest version's record."""
-    st, d = public_get(f"/records/{concept_recid}", sandbox)
-    if st != 200:
-        raise ZenodoError(f"could not read record {concept_recid}: HTTP {st}: {d}")
-    version: str | None = d.get("metadata", {}).get("version")
-    return version
-
-
 def public_concept_from_doi(doi: str | None, sandbox: bool = False) -> str:
     """Resolve a Zenodo DOI to its concept record id — public, no token."""
     m = re.search(r"zenodo\.(\d+)", doi or "")
@@ -284,6 +274,52 @@ def repo_from_related(metadata: dict[str, Any]) -> str | None:
         if len(parts) >= 2:
             return f"{parts[0]}/{parts[1]}"
     return None
+
+
+def hits_total(payload: Any) -> int:
+    """Number of hits in a Zenodo search response, tolerating either the legacy
+    integer `hits.total` or the ElasticSearch-style `{"value": n}` shape."""
+    if not isinstance(payload, dict):
+        return 0
+    total = payload.get("hits", {}).get("total", 0)
+    if isinstance(total, dict):
+        total = total.get("value", 0)
+    return int(total or 0)
+
+
+def public_tag_archived(concept_recid: str, tag: str, sandbox: bool = False) -> bool:
+    """Is a version labeled exactly `tag` published in this concept? Public, no token.
+
+    A single search request — deliberately NOT an enumerate-all-versions scan: the
+    unauthenticated records API is rate-limited to 30 req/min, so paging a large
+    concept (hundreds of versions) 429s mid-scan and would silently undercount. The
+    `metadata.version:"..."` phrase match is exact (`"8.0"` does not match `8.0.0.6`),
+    so one request answers the membership question precisely.
+
+    Matches on the version *label*, which the per-release archiver sets to the source
+    tag. A release captured only inside a relabeled curated rollup (label != tag)
+    would not be found — acceptable: the archiver's default labels a record by its
+    tag, and erring toward flagging drift is the intended loud-on-failure behavior."""
+    q = urllib.parse.quote(f'conceptrecid:{concept_recid} AND metadata.version:"{tag}"')
+    st, d = public_get(f"/records?q={q}&all_versions=true&size=1", sandbox)
+    if st != 200:
+        raise ZenodoError(f"could not query concept {concept_recid}: HTTP {st}: {d}")
+    return hits_total(d) > 0
+
+
+def latest_release_archived(
+    repo: str, concept_recid: str, sandbox: bool = False
+) -> tuple[bool, str]:
+    """Drift check: is the repo's latest GitHub release archived in the concept?
+    Returns (archived, gh_tag); public, no token.
+
+    Membership — not equality against the single 'latest' Zenodo version — because a
+    backfill of old releases (or a curated major rollup) creates records today, so the
+    newest-by-`created` version no longer tracks release chronology and can lag the
+    real latest release. 'Is the latest release's tag archived?' is the robust
+    question, and public_tag_archived answers it in one request."""
+    gh_tag, _ = latest_github_release(repo)
+    return public_tag_archived(concept_recid, gh_tag, sandbox), gh_tag
 
 
 def _identifier_is_repo(identifier: str, repo: str) -> bool:

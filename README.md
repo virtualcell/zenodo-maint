@@ -164,7 +164,10 @@ use this tool. `doctor` is the preflight gate:
 - **competing-concept check** — tokenless Zenodo search for other concepts
   archiving the repo (best-effort; empty on any search error, so it never
   false-alarms).
-- **drift check** — latest GitHub release vs latest Zenodo version.
+- **drift check** — is the repo's latest GitHub release archived in the concept?
+  A single tokenless search for a version matching the release tag (membership, not
+  equality against Zenodo's "latest" version — which a backfill of old releases or a
+  curated rollup can otherwise displace, causing false drift).
 
 ### Where allowed concepts are recorded
 `doctor` treats a concept as expected if it is any of:
