@@ -123,27 +123,55 @@ class ZenodoClient:
         return out
 
     def concept_versions(self, concept_recid: str) -> list[dict[str, Any]]:
-        """All published depositions in a concept, oldest->newest by created.
+        """All published depositions in a concept, oldest->newest by created,
+        deduplicated by record id.
 
-        Paginates: the deposit search caps size at 100, so a concept with more than
-        100 versions needs every page — otherwise dedup and latest_version see only
-        a slice and could miss existing records (→ duplicate archives)."""
+        Zenodo's deposit search returns UNSTABLE, overlapping pages: a single
+        paginated pass can hand back the same record twice AND miss others, so a
+        caller that dedups or takes the latest version could silently act on a
+        partial slice (→ duplicate archives, partial metadata updates). We defend by
+        unioning records by id across repeated full passes until the set is complete:
+        the target count comes from the public records API (which does report a
+        total), with a converged pass (one that adds nothing new) as the fallback
+        when that total is unavailable. Bounded by MAX_PASSES so an ever-shifting
+        search can't loop forever."""
         q = urllib.parse.quote(f"conceptrecid:{concept_recid}")
-        out: list[dict[str, Any]] = []
-        page = 1
-        while True:
-            st, d = self._call(
-                "GET",
-                f"/deposit/depositions?q={q}&all_versions=true&size=100&page={page}",
-            )
-            self._expect((200,), st, d, "list concept versions")
-            if not d:
-                break
-            out.extend(d)
-            if len(d) < 100:
-                break
-            page += 1
-        pub = [x for x in out if x.get("submitted")]
+        sandbox = self.base == SANDBOX
+        # Completeness target — the deposit list endpoint returns no total, so read
+        # it from the public records search (same query, tokenless). 0 if unavailable.
+        try:
+            _, rd = public_get(f"/records?q={q}&all_versions=true&size=1", sandbox)
+            target = hits_total(rd)
+        except ZenodoError:
+            target = 0
+
+        max_passes = 12
+        by_id: dict[Any, dict[str, Any]] = {}
+        for _ in range(max_passes):
+            added = 0
+            page = 1
+            while True:
+                st, d = self._call(
+                    "GET",
+                    f"/deposit/depositions?q={q}&all_versions=true&size=100&page={page}",
+                )
+                self._expect((200,), st, d, "list concept versions")
+                if not d:
+                    break
+                for x in d:
+                    rid = x.get("id")
+                    if rid is not None and rid not in by_id:
+                        by_id[rid] = x
+                        added += 1
+                if len(d) < 100:
+                    break
+                page += 1
+            pub_count = sum(1 for x in by_id.values() if x.get("submitted"))
+            if target and pub_count >= target:
+                break            # complete against the known total
+            if added == 0:
+                break            # a full pass found nothing new → converged
+        pub = [x for x in by_id.values() if x.get("submitted")]
         pub.sort(key=lambda x: x.get("created", ""))
         return pub
 
