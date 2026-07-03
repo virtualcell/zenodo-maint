@@ -113,6 +113,46 @@ def cmd_verify_token(args: argparse.Namespace) -> None:
         print(f"  - {title:44} v{m.get('version')}  concept={r.get('conceptrecid')}")
 
 
+def cmd_list_owned(args: argparse.Namespace) -> None:
+    """Every Zenodo concept this account owns, deduped to the latest version, with
+    the source GitHub repo — the authoritative 'which repos are tracked' list."""
+    cli = _client(args)
+    deps = cli.owned_records_all()
+    latest: dict[str, dict[str, Any]] = {}   # concept recid -> latest deposition
+    for d in deps:
+        cid = str(d.get("conceptrecid") or d.get("id"))
+        cur = latest.get(cid)
+        if cur is None or d.get("created", "") > cur.get("created", ""):
+            latest[cid] = d
+    rows = []
+    for cid, d in latest.items():
+        m = d.get("metadata", {})
+        rows.append({
+            "repo": api.repo_from_related(m) or "",
+            "concept_doi": d.get("conceptdoi") or "",
+            "concept_recid": cid,
+            "latest_doi": m.get("doi") or d.get("doi") or "",
+            "version": m.get("version") or "",
+            "date": m.get("publication_date") or "",
+            "title": m.get("title") or "",
+        })
+    if args.repo_only:
+        rows = [r for r in rows if r["repo"]]
+    rows.sort(key=lambda r: (r["repo"] == "", r["repo"].lower(), r["title"].lower()))
+
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return
+    linked = sum(1 for r in rows if r["repo"])
+    print(f"account owns {len(latest)} concept(s); {linked} linked to a GitHub repo:\n")
+    w = max([len(r["repo"]) for r in rows] + [4])
+    print(f"{'repo':{w}}  {'concept DOI':22}  {'latest':12}  {'date':10}  title")
+    print("-" * (w + 62))
+    for r in rows:
+        print(f"{r['repo'] or '—':{w}}  {(r['concept_doi'] or r['concept_recid']):22}  "
+              f"{r['version'][:12]:12}  {r['date']:10}  {r['title'][:50]}")
+
+
 def cmd_list_versions(args: argparse.Namespace) -> None:
     cli = _client(args)
     for x in cli.concept_versions(_concept(cli, args)):
@@ -493,6 +533,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("verify-token").set_defaults(func=cmd_verify_token)
+    lo = sub.add_parser("list-owned",
+                        help="list every concept/DOI this account owns, with source repo")
+    lo.add_argument("--json", action="store_true", help="output JSON")
+    lo.add_argument("--repo-only", action="store_true",
+                    help="only records linked to a GitHub repo")
+    lo.set_defaults(func=cmd_list_owned)
     sub.add_parser("list-versions").set_defaults(func=cmd_list_versions)
     sub.add_parser("check-drift").set_defaults(func=cmd_check_drift)
     sub.add_parser("doctor", help="check for integration conflicts, forks, and drift"
