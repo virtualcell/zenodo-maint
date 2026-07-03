@@ -165,11 +165,10 @@ def cmd_check_drift(args: argparse.Namespace) -> None:
     # Public APIs only — no token, so this is safe to run in a secret-less monitor.
     repo = _repo(args)
     concept = _concept_public(args)
-    gh_tag, _ = api.latest_github_release(repo)
-    zen = api.public_latest_version(concept, args.sandbox)
+    archived, gh_tag = api.latest_release_archived(repo, concept, args.sandbox)
     print(f"latest GitHub release : {gh_tag}")
-    print(f"latest Zenodo version : {zen}")
-    if gh_tag == zen:
+    print(f"archived on Zenodo    : {'yes' if archived else 'no'}")
+    if archived:
         print("IN SYNC")
         return
     print("DRIFT — latest release is not archived on Zenodo")
@@ -499,12 +498,11 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     # C — drift
     print("[drift]")
-    gh_tag, _ = api.latest_github_release(repo)
-    zen_ver = api.public_latest_version(concept, args.sandbox)
-    if gh_tag == zen_ver:
-        print(f"  ✓ in sync ({gh_tag})")
+    archived, gh_tag = api.latest_release_archived(repo, concept, args.sandbox)
+    if archived:
+        print(f"  ✓ latest release {gh_tag} is archived")
     else:
-        print(f"  ✗ DRIFT — github={gh_tag} zenodo={zen_ver}")
+        print(f"  ✗ DRIFT — latest release {gh_tag} not archived on Zenodo")
         problems += 1
 
     print()

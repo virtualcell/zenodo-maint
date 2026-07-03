@@ -31,8 +31,10 @@ Run inside a repo that has both files and you can omit `--concept`/`--repo`.
 
 ## Common tasks
 - Check auth/ownership: `zenodo-maint verify-token`
+- List every concept/DOI this account owns (+ source repo): `zenodo-maint list-owned` (add `--repo-only` for GitHub-linked only, `--json` for machine output). Authoritative answer to "which repos are actually tracked in Zenodo?" — read from Zenodo, not a hand-kept list.
 - List versions/dates: `zenodo-maint list-versions`
-- Is Zenodo behind GitHub? `zenodo-maint check-drift`
+- Is the latest GitHub release archived on Zenodo? `zenodo-maint check-drift` (public/tokenless). This is a **membership** test — "is a version labeled the latest release tag published in the concept?" — not equality against Zenodo's newest-by-`created` version, which a backfill of old releases or a curated rollup would otherwise displace into false drift.
+- Scaffold the two standard files for a new repo: `zenodo-maint --repo owner/repo bootstrap` (writes starter `CITATION.cff` + `.zenodo.json`).
 - Archive one release: `zenodo-maint archive-release --tag v9.66.0` (add `--execute`)
 - Backfill missed releases: build a JSON `[{"tag","date"}]`, then `zenodo-maint backfill --tags-file tags.json` (dry-run, then `--execute`)
 - Rename a relation on all versions: `zenodo-maint relink --from-relation isNewVersionOf --to-relation continues --execute`
@@ -73,4 +75,9 @@ passed via `--allow-concept`.
 - A gateway **504** can be returned even when the write succeeded — verify, don't blindly retry.
 - List versions via deposit search `q=conceptrecid:<id>&all_versions=true` (the public
   `/versions` endpoint 400s unauthenticated).
+- The **public** records API is rate-limited (~30 req/min) and caps page size at **25**
+  (authenticated deposit search allows 100). Don't enumerate all versions tokenlessly —
+  paging a large concept 429s mid-scan and silently undercounts. To ask "is tag X
+  archived?", query the one tag: `q=conceptrecid:<id> AND metadata.version:"<tag>"`
+  (exact phrase match — `"8.0"` does not match `8.0.0.06`).
 - Test against **sandbox.zenodo.org** with `--sandbox` before touching production.
