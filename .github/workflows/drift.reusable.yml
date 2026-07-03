@@ -8,7 +8,7 @@ name: Zenodo drift check (reusable)
 #     schedule: [{ cron: '0 12 * * 1' }]
 #   jobs:
 #     drift:
-#       uses: virtualcell/zenodo-maint/.github/workflows/drift.reusable.yml@v1
+#       uses: virtualcell/zenodo-maint/.github/workflows/drift.reusable.yml@v1.5.0
 
 on:
   workflow_call:
@@ -37,23 +37,53 @@ jobs:
           set -uo pipefail
           global=()
           [ -n "$CONCEPT" ] && global+=(--concept "$CONCEPT")
-          if zenodo-maint "${global[@]}" check-drift; then
-            echo "drift=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Open or update issue on drift
-        if: steps.check.outputs.drift == 'true'
+          # exit 0 = in sync, 2 = drift, other = check error (do NOT mislabel as drift)
+          code=0
+          out=$(zenodo-maint "${global[@]}" check-drift 2>&1) || code=$?
+          echo "$out"
+          gh_ver=$(printf '%s\n' "$out" | sed -n 's/.*GitHub release *: *//p' | head -1)
+          zen_ver=$(printf '%s\n' "$out" | sed -n 's/.*Zenodo version *: *//p' | head -1)
+          {
+            echo "gh_ver=${gh_ver:-?}"
+            echo "zen_ver=${zen_ver:-?}"
+            case $code in
+              0) echo "state=ok" ;;
+              2) echo "state=drift" ;;
+              *) echo "state=error" ;;
+            esac
+          } >> "$GITHUB_OUTPUT"
+      - name: Open or update tracking issue
+        if: steps.check.outputs.state != 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
+          STATE: ${{ steps.check.outputs.state }}
+          GH_VER: ${{ steps.check.outputs.gh_ver }}
+          ZEN_VER: ${{ steps.check.outputs.zen_ver }}
         run: |
           set -euo pipefail
-          title="Zenodo release archiving has drifted"
-          num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
-          body="The latest GitHub release is not the latest version on Zenodo. The release->Zenodo archiving pipeline may have stopped working. Filed by zenodo-maint drift check."
-          if [ -n "$num" ]; then
-            gh issue comment "$num" --body "Still drifting as of this run."
+          if [ "$STATE" = "drift" ]; then
+            title="Zenodo release archiving has drifted"
           else
-            gh issue create --title "$title" --body "$body"
+            title="Zenodo drift check errored"
+          fi
+          {
+            echo "State: **${STATE}**"
+            echo ""
+            echo "| | Version |"
+            echo "|---|---|"
+            echo "| Latest GitHub release | \`${GH_VER}\` |"
+            echo "| Latest Zenodo version | \`${ZEN_VER}\` |"
+            echo ""
+            echo "If **drift**: the release→Zenodo archiving pipeline may have stopped"
+            echo "(expired token, revoked OAuth grant, or a disabled/forking integration)."
+            echo "If **error**: the check itself failed — see the run logs."
+            echo ""
+            echo "_Filed automatically by the zenodo-maint drift check._"
+          } > body.md
+          num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "Still ${STATE}: GitHub \`${GH_VER}\` vs Zenodo \`${ZEN_VER}\`."
+          else
+            gh issue create --title "$title" --body-file body.md
           fi
           exit 1

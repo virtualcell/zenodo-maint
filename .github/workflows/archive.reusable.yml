@@ -6,7 +6,7 @@ name: Zenodo archive (reusable)
 #
 #   jobs:
 #     archive:
-#       uses: virtualcell/zenodo-maint/.github/workflows/archive.reusable.yml@v1
+#       uses: virtualcell/zenodo-maint/.github/workflows/archive.reusable.yml@v1.5.0
 #       with:
 #         tag: ${{ github.event.release.tag_name }}
 #       secrets:
@@ -24,16 +24,42 @@ on:
 permissions:
   contents: read
 
+# Each new version branches off the concept's current latest, so two archive jobs
+# running at once could both branch off the same latest and duplicate. Serialize
+# per calling repo; queue rather than cancel so no release is dropped.
+concurrency:
+  group: zenodo-archive-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   archive:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4 # for CITATION.cff / .zenodo.json
+      - name: Skip prereleases
+        id: pre
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -uo pipefail
+          skip=false
+          # A prerelease must not mint a real DOI. Tags with no Release (e.g. a
+          # manual backfill of an old tag) are treated as non-prerelease.
+          if [ "$TAG" != "latest" ]; then
+            pre=$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease' 2>/dev/null || echo false)
+            [ "$pre" = "true" ] && skip=true
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          [ "$skip" = "true" ] && echo "::notice::Skipping prerelease $TAG."
+          true
       - name: Install zenodo-maint
+        if: steps.pre.outputs.skip != 'true'
         env:
           REF: ${{ inputs.ref }}
         run: pipx install "git+https://github.com/virtualcell/zenodo-maint@${REF}"
       - name: Archive release
+        if: steps.pre.outputs.skip != 'true'
         env:
           ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
           CONCEPT: ${{ inputs.concept_recid }}
