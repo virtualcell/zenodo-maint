@@ -511,6 +511,107 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     print("doctor: healthy")
 
 
+def _audit_one(repo: str, concept: str, token: str | None, sandbox: bool) -> int:
+    """Audit one repo's Zenodo wiring; print a report block and return the problem
+    count. Config hygiene (files present, reusable workflows pinned at the floating
+    @vN, .zenodo.json consistent with the published record) — complements `doctor`,
+    which covers the webhook/competing-concept/drift side."""
+    print(f"audit: repo={repo} concept={concept}\n")
+    problems = 0
+
+    print("[files]")
+    cff = api.github_file(repo, "CITATION.cff", token)
+    zj_txt = api.github_file(repo, ".zenodo.json", token)
+    for name, txt in (("CITATION.cff", cff), (".zenodo.json", zj_txt)):
+        if txt is None:
+            print(f"  ✗ {name} missing")
+            problems += 1
+        else:
+            print(f"  ✓ {name}")
+
+    # [workflows] — must call the reusable workflows AND pin the floating @vN so they
+    # keep receiving minor/patch updates; a @vX.Y.Z or SHA pin silently freezes.
+    print("[workflows]")
+    texts = [t for t in (api.github_file(repo, f".github/workflows/{n}", token)
+                         for n in api.github_dir(repo, ".github/workflows", token))
+             if t]
+    refs = api.reusable_refs(texts)
+    for kind in ("archive", "drift"):
+        ref = refs[kind]
+        if ref is None:
+            print(f"  ✗ {kind}.reusable.yml not used")
+            problems += 1
+        elif api.is_major_pin(ref):
+            print(f"  ✓ {kind}.reusable.yml@{ref} (tracks updates)")
+        else:
+            print(f"  ✗ {kind}.reusable.yml@{ref} — pin the floating major tag "
+                  f"(@{ref.split('.')[0]}) so it tracks updates")
+            problems += 1
+
+    # [metadata] — is .zenodo.json consistent with what's actually published? (We do
+    # NOT diff against CITATION.cff: that needs a YAML parser this stdlib-only tool
+    # avoids, and is really cffconvert's job. The record is the ground truth.)
+    print("[metadata]")
+    if zj_txt is None:
+        print("  ? skipped — no .zenodo.json")
+    else:
+        try:
+            zj = json.loads(zj_txt)
+        except json.JSONDecodeError as e:
+            print(f"  ✗ .zenodo.json is not valid JSON ({e})")
+            return problems + 1
+        st, rec = api.public_get(f"/records/{concept}", sandbox)
+        rm = rec.get("metadata", {}) if (st == 200 and isinstance(rec, dict)) else {}
+        if not rm:
+            print(f"  ? skipped — could not read record {concept}")
+        else:
+            zc, rc = zj.get("creators", []) or [], rm.get("creators", []) or []
+            if _creators_equal(zc, rc):
+                print(f"  ✓ creators match the published record ({len(zc)})")
+            else:
+                print(f"  ✗ creators differ from the published record "
+                      f"(.zenodo.json {len(zc)} vs record {len(rc)}) — reconcile "
+                      f"with apply-metadata --creators-only")
+                problems += 1
+            zt, rt = str(zj.get("title", "")).strip(), str(rm.get("title", "")).strip()
+            if zt and rt and zt != rt:
+                # The title is what people see on the DOI landing page, so drive it
+                # to consistency: a mismatch is a hard problem. (Curated repos whose
+                # published record carries a per-version title, e.g. vcell's "Virtual
+                # Cell 8.0", will flag here until their .zenodo.json title is
+                # reconciled with what should be displayed.)
+                print(f"  ✗ title differs from the published record: "
+                      f".zenodo.json {zt!r} vs record {rt!r}")
+                problems += 1
+            else:
+                print(f"  ✓ title matches ({rt!r})")
+
+    print()
+    return problems
+
+
+def cmd_audit(args: argparse.Namespace) -> None:
+    """Audit repo Zenodo wiring across one repo or an entire monitored.json. Tokenless
+    against public APIs, but set $GH_TOKEN (or $GITHUB_TOKEN) to avoid GitHub's
+    60-req/hour unauthenticated limit — a multi-repo audit needs it. Exits non-zero
+    if any repo has a problem, so it doubles as a CI/monitor gate."""
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if args.monitored:
+        with open(args.monitored) as fh:
+            entries = json.load(fh)
+    else:
+        entries = [{"repo": _repo(args), "concept": _concept_public(args)}]
+    total = 0
+    for i, e in enumerate(entries):
+        if i:
+            print("=" * 60)
+        total += _audit_one(str(e["repo"]), str(e["concept"]), token, args.sandbox)
+    n = len(entries)
+    if total:
+        sys.exit(f"audit: {total} problem(s) across {n} repo(s)")
+    print(f"audit: {n} repo(s) healthy")
+
+
 # --- parser -------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="zenodo-maint", description=__doc__)
@@ -541,6 +642,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check-drift").set_defaults(func=cmd_check_drift)
     sub.add_parser("doctor", help="check for integration conflicts, forks, and drift"
                    ).set_defaults(func=cmd_doctor)
+    au = sub.add_parser("audit",
+                        help="check repos have the standard files, @vN-pinned reusable "
+                             "workflows, and record-consistent .zenodo.json")
+    au.add_argument("--monitored",
+                    help="audit every {repo, concept} in this JSON file (e.g. "
+                         "monitored.json) instead of a single repo")
+    au.set_defaults(func=cmd_audit)
 
     a = sub.add_parser("archive-release", help="archive one release tag as a new version")
     a.add_argument("--tag", required=True, help='release tag, or "latest"')
