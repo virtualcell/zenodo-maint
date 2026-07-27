@@ -756,6 +756,14 @@ def build_parser() -> argparse.ArgumentParser:
     bs.add_argument("--title", help="project title (default: repo name)")
     bs.add_argument("--force", action="store_true", help="overwrite existing files")
     bs.set_defaults(func=cmd_bootstrap)
+
+    # --execute lives on the main parser, but every documented example (and the
+    # reusable archive workflow) writes it *after* the subcommand. Mirror it onto
+    # the mutating subcommands with SUPPRESS as default so the trailing form
+    # parses and a leading --execute is never clobbered by a subparser default.
+    for mut in (a, cc, b, r, m):
+        mut.add_argument("--execute", action="store_true", default=argparse.SUPPRESS,
+                         help="actually write (default: dry run)")
     return p
 
 
