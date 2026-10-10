@@ -34,6 +34,11 @@ SANDBOX = "https://sandbox.zenodo.org/api"
 # It's a per-blocking-operation timeout, so active large uploads (data still
 # flowing) are unaffected — only genuine stalls trip it.
 REQUEST_TIMEOUT = 120
+# A release's source tarball (vcell's is large) cannot be written within REQUEST_TIMEOUT:
+# vcell's production archives failed on 2026-10-01 and 2026-10-06 with "The write
+# operation timed out". Uploads get their own socket timeout and retries.
+UPLOAD_TIMEOUT = 900
+UPLOAD_ATTEMPTS = 3
 
 Json = Any
 Metadata = dict[str, Any]
@@ -59,6 +64,8 @@ class ZenodoClient:
         raw: bool = False,
         auth: bool = True,
         parse: bool = True,
+        timeout: float = REQUEST_TIMEOUT,
+        attempts: int | None = None,
     ) -> tuple[int, Json]:
         headers: dict[str, str] = {}
         if auth:
@@ -73,13 +80,16 @@ class ZenodoClient:
         if not url.startswith("http"):
             url = self.base + url
         req = urllib.request.Request(url, data=body, method=method, headers=headers)
-        # Retry only idempotent GETs on transient network faults (truncated reads,
-        # connection resets). Never auto-retry a write: a 504 can mask a successful
-        # write, so a blind retry could double-create.
-        attempts = 4 if method == "GET" else 1
+        # Retry only idempotent requests on transient network faults (truncated reads,
+        # connection resets): GETs by default, and a caller may opt a write in when it is
+        # idempotent (a file PUT to a bucket key overwrites). Never auto-retry a
+        # creating write: a 504 can mask a successful write, so a blind retry could
+        # double-create.
+        if attempts is None:
+            attempts = 4 if method == "GET" else 1
         for i in range(attempts):
             try:
-                with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
                     c = r.read()
                     return int(r.status), (json.loads(c) if c and parse else c)
             except urllib.error.HTTPError as e:
@@ -222,9 +232,11 @@ class ZenodoClient:
         for f in draft.get("files", []):
             self._call("DELETE", f"/deposit/depositions/{draft['id']}/files/{f['id']}")
         with open(filepath, "rb") as fh:
+            # Idempotent: a PUT to the same bucket key overwrites, so retrying is safe.
             st, d = self._call(
                 "PUT", f"{draft['links']['bucket']}/{filename}",
                 data=fh.read(), raw=True, parse=False,
+                timeout=UPLOAD_TIMEOUT, attempts=UPLOAD_ATTEMPTS,
             )
         self._expect((200, 201), st, d, f"upload {filename}")
 
