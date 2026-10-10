@@ -188,6 +188,9 @@ def cmd_check_drift(args: argparse.Namespace) -> None:
     # Public APIs only — no token, so this is safe to run in a secret-less monitor.
     repo = _repo(args)
     concept = _concept_public(args)
+    if args.max_lag_days:
+        _check_drift_lagged(repo, concept, args.max_lag_days, args.sandbox)
+        return
     archived, gh_tag = api.latest_release_archived(repo, concept, args.sandbox)
     print(f"latest GitHub release : {gh_tag}")
     print(f"archived on Zenodo    : {'yes' if archived else 'no'}")
@@ -195,6 +198,25 @@ def cmd_check_drift(args: argparse.Namespace) -> None:
         print("IN SYNC")
         return
     print("DRIFT — latest release is not archived on Zenodo")
+    sys.exit(2)
+
+
+def _check_drift_lagged(repo: str, concept: str, max_lag_days: int, sandbox: bool) -> None:
+    """check-drift for a repo archived by periodic rollup (archive.reusable.yml on a
+    schedule with tag 'latest'): releases may wait up to max_lag_days for the next rollup."""
+    latest, waiting, drifted = api.release_lag(repo, concept, max_lag_days, sandbox=sandbox)
+    print(f"latest GitHub release : {latest}")
+    if waiting is None:
+        print("archived on Zenodo    : yes")
+        print("IN SYNC")
+        return
+    print("archived on Zenodo    : no")
+    print(f"oldest waiting release: {waiting[0]} ({waiting[1]})")
+    if not drifted:
+        print(f"IN SYNC — waiting for the next rollup (tolerance {max_lag_days} days)")
+        return
+    print(f"DRIFT — {waiting[0]} has waited more than {max_lag_days} days; "
+          "the rollup may have stopped")
     sys.exit(2)
 
 
@@ -700,7 +722,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="only records linked to a GitHub repo")
     lo.set_defaults(func=cmd_list_owned)
     sub.add_parser("list-versions").set_defaults(func=cmd_list_versions)
-    sub.add_parser("check-drift").set_defaults(func=cmd_check_drift)
+    cd = sub.add_parser("check-drift")
+    cd.add_argument("--max-lag-days", type=int, default=0,
+                    help="for repos archived by periodic rollup: drift only when a release "
+                         "newer than the last archived one has waited more than this many days "
+                         "(0: the latest release must be archived)")
+    cd.set_defaults(func=cmd_check_drift)
     sub.add_parser("doctor", help="check for integration conflicts, forks, and drift"
                    ).set_defaults(func=cmd_doctor)
     au = sub.add_parser("audit",

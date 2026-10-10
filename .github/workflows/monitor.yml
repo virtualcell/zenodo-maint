@@ -38,10 +38,12 @@ jobs:
         env:
           REPO: ${{ matrix.item.repo }}
           CONCEPT: ${{ matrix.item.concept }}
+          # Optional per repo in monitored.json: set for repos archived by monthly rollup.
+          MAX_LAG_DAYS: ${{ matrix.item.max_lag_days || 0 }}
         run: |
           set -u
           code=0
-          zenodo-maint --repo "$REPO" --concept "$CONCEPT" check-drift || code=$?
+          zenodo-maint --repo "$REPO" --concept "$CONCEPT" check-drift --max-lag-days "$MAX_LAG_DAYS" || code=$?
           case $code in
             0) echo "state=ok" >> "$GITHUB_OUTPUT" ;;
             2) echo "state=drift" >> "$GITHUB_OUTPUT" ;;

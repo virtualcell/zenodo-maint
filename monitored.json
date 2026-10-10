@@ -1,14 +1,14 @@
 [
-  { "repo": "biosimulations/biosimulations",           "concept": "21053715" },
-  { "repo": "biosimulations/biosim-client",             "concept": "21127427" },
-  { "repo": "biosimulations/biosimulations-runutils",   "concept": "21127429" },
-  { "repo": "biosimulations/compose-api",               "concept": "21127421" },
-  { "repo": "biosimulations/platform",                  "concept": "21127423" },
-  { "repo": "biosimulators/Biosimulators",              "concept": "21127431" },
-  { "repo": "biosimulators/Biosimulators_test_suite",   "concept": "21126770" },
-  { "repo": "biosimulators/Biosimulators_utils",        "concept": "21126774" },
-  { "repo": "virtualcell/vcell",                        "concept": "7796386" },
-  { "repo": "virtualcell/vcell-solvers",                "concept": "8271504" },
-  { "repo": "virtualcell/pyvcell",                      "concept": "21127437" },
-  { "repo": "cam-center/SpringSaLaD",                   "concept": "11270119" }
+  { "repo": "biosimulations/biosimulations",          "concept": "21053715", "max_lag_days": 35 },
+  { "repo": "biosimulations/biosim-client",           "concept": "21127427", "max_lag_days": 35 },
+  { "repo": "biosimulations/biosimulations-runutils", "concept": "21127429", "max_lag_days": 35 },
+  { "repo": "biosimulations/compose-api",             "concept": "21127421", "max_lag_days": 35 },
+  { "repo": "biosimulations/platform",                "concept": "21127423", "max_lag_days": 35 },
+  { "repo": "biosimulators/Biosimulators",            "concept": "21127431" },
+  { "repo": "biosimulators/Biosimulators_test_suite", "concept": "21126770" },
+  { "repo": "biosimulators/Biosimulators_utils",      "concept": "21126774" },
+  { "repo": "virtualcell/vcell",                      "concept": "7796386", "max_lag_days": 35 },
+  { "repo": "virtualcell/vcell-solvers",              "concept": "8271504", "max_lag_days": 35 },
+  { "repo": "virtualcell/pyvcell",                    "concept": "21127437", "max_lag_days": 35 },
+  { "repo": "cam-center/SpringSaLaD",                 "concept": "11270119" }
 ]

@@ -15,6 +15,10 @@ on:
     inputs:
       concept_recid: { type: string, required: false, default: '' } # override CITATION.cff
       ref: { type: string, required: false, default: 'v1' }
+      # For a repo archived by periodic rollup (archive.reusable.yml on a schedule with
+      # tag 'latest'): drift only when a release has waited longer than this. 0 = every
+      # release must be archived already.
+      max_lag_days: { type: number, required: false, default: 0 }
 
 permissions:
   contents: read
@@ -33,13 +37,14 @@ jobs:
         id: check
         env:
           CONCEPT: ${{ inputs.concept_recid }}
+          MAX_LAG_DAYS: ${{ inputs.max_lag_days }}
         run: |
           set -uo pipefail
           global=()
           [ -n "$CONCEPT" ] && global+=(--concept "$CONCEPT")
           # exit 0 = in sync, 2 = drift, other = check error (do NOT mislabel as drift)
           code=0
-          out=$(zenodo-maint "${global[@]}" check-drift 2>&1) || code=$?
+          out=$(zenodo-maint "${global[@]}" check-drift --max-lag-days "$MAX_LAG_DAYS" 2>&1) || code=$?
           echo "$out"
           gh_ver=$(printf '%s\n' "$out" | sed -n 's/.*GitHub release *: *//p' | head -1)
           zen_ver=$(printf '%s\n' "$out" | sed -n 's/.*Zenodo version *: *//p' | head -1)

@@ -13,6 +13,7 @@ responsible for the --dry-run / --execute gate.
 """
 from __future__ import annotations
 
+import datetime
 import http.client
 import json
 import os
@@ -21,7 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 PROD = "https://zenodo.org/api"
@@ -349,6 +350,93 @@ def latest_release_archived(
     question, and public_tag_archived answers it in one request."""
     gh_tag, _ = latest_github_release(repo)
     return public_tag_archived(concept_recid, gh_tag, sandbox), gh_tag
+
+
+def public_tags_archived(
+    concept_recid: str, tags: list[str], sandbox: bool = False
+) -> set[str]:
+    """Which of `tags` are published version labels in this concept? Public, no token.
+    public_tag_archived for many tags at once: one OR'd phrase query per 25 tags (the
+    public page-size limit), since each search on a large concept can take tens of
+    seconds and the unauthenticated API allows 30 requests a minute."""
+    found: set[str] = set()
+    for i in range(0, len(tags), 25):
+        chunk = tags[i:i + 25]
+        ors = " OR ".join(f'"{t}"' for t in chunk)
+        q = urllib.parse.quote(f"conceptrecid:{concept_recid} AND metadata.version:({ors})")
+        st, d = public_get(f"/records?q={q}&all_versions=true&size={len(chunk)}", sandbox)
+        if st != 200 or not isinstance(d, dict):
+            raise ZenodoError(f"could not query concept {concept_recid}: HTTP {st}: {d}")
+        for h in d.get("hits", {}).get("hits", []):
+            v = h.get("metadata", {}).get("version")
+            if v in chunk:
+                found.add(str(v))
+    return found
+
+
+def github_releases(repo: str) -> list[tuple[str, str]]:
+    """Published, non-prerelease releases as (tag, YYYY-MM-DD), newest first; public, no
+    auth. One page of 100: a drift check only needs the releases since the last archived
+    one, and a repo releasing 100 times between rollups has drifted however it is read."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/releases?per_page=100",
+        headers={"Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+        rows = list(json.loads(r.read()))
+    out = [(str(x.get("tag_name", "")), str(x.get("published_at") or "")[:10])
+           for x in rows if not x.get("prerelease") and not x.get("draft")]
+    return sorted(out, key=lambda t: t[1], reverse=True)
+
+
+def oldest_unarchived_since_last_archived(
+    releases: list[tuple[str, str]], is_archived: Callable[[str], bool],
+    not_before: str | None = None,
+) -> tuple[str, str] | None:
+    """Walk `releases` (newest first) down to the first archived one and return the
+    OLDEST release above it, i.e. the one that has waited longest, or None when the
+    newest release is archived.
+
+    `not_before` (YYYY-MM-DD) stops the walk early at the first unarchived release
+    older than it: the caller only needs to know that one exists, and stopping keeps a
+    busy repo's walk inside the public API's rate limit."""
+    oldest: tuple[str, str] | None = None
+    for tag, date in releases:
+        if is_archived(tag):
+            break
+        oldest = (tag, date)
+        if not_before and date and date < not_before:
+            break
+    return oldest
+
+
+def release_lag(
+    repo: str, concept_recid: str, max_lag_days: int, today: datetime.date | None = None,
+    sandbox: bool = False,
+) -> tuple[str, tuple[str, str] | None, bool]:
+    """Drift check that tolerates periodic (rollup) archiving.
+
+    Returns (latest_tag, oldest_waiting, drifted). `oldest_waiting` is the oldest
+    release newer than the last archived one (None when in sync); when drifted it may
+    instead be the first release found past the tolerance, since the walk stops there.
+    The repo has drifted when that release is more than `max_lag_days` old: a rollup
+    that runs every N days archives the latest release, so with max_lag_days a little
+    over N, only a rollup that stopped running leaves a release waiting that long."""
+    releases = github_releases(repo)
+    if not releases:
+        return "", None, False
+    today = today or datetime.date.today()
+    cutoff = (today - datetime.timedelta(days=max_lag_days)).isoformat()
+    if public_tag_archived(concept_recid, releases[0][0], sandbox):
+        return releases[0][0], None, False  # in sync: one query, the common case
+    # Only the releases inside the tolerance window, plus the first one past it, can
+    # change the answer; look all of those up in one batched query.
+    window = [t for t, d in releases if not d or d >= cutoff]
+    window += [t for t, d in releases if d and d < cutoff][:1]
+    archived = public_tags_archived(concept_recid, window, sandbox)
+    oldest = oldest_unarchived_since_last_archived(
+        releases[:len(window)], lambda tag: tag in archived, cutoff)
+    drifted = oldest is not None and bool(oldest[1]) and oldest[1] < cutoff
+    return releases[0][0], oldest, drifted
 
 
 def _identifier_is_repo(identifier: str, repo: str) -> bool:
