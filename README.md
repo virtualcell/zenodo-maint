@@ -133,7 +133,34 @@ whether reusing an already-archived *tag* is allowed.
 ## Reusable workflows
 
 In a target repo, add a `ZENODO_TOKEN` secret (ideally an **org-level** secret)
-and two thin callers:
+and two thin callers. **Archive by monthly rollup** (recommended for any repo that
+releases more than a few times a month): a scheduled run archives the latest release
+if it is not on Zenodo yet, so a burst of build releases becomes one version a month.
+Archiving is idempotent (an archived tag is skipped), and a manual run archives now,
+e.g. for a paper. A schedule also does not depend on `release` events, which never
+fire for releases created with `GITHUB_TOKEN`.
+
+```yaml
+# .github/workflows/zenodo-archive.yml — monthly rollup
+on:
+  schedule: [{ cron: '0 11 1 * *' }]   # 1st of the month, 11:00 UTC
+  workflow_dispatch: { inputs: { tag: { description: 'Tag to archive', default: 'latest' } } }
+jobs:
+  archive:
+    uses: virtualcell/zenodo-maint/.github/workflows/archive.reusable.yml@v1
+    with: { tag: "${{ inputs.tag || 'latest' }}" }
+    secrets: { ZENODO_TOKEN: '${{ secrets.ZENODO_TOKEN }}' }
+```
+```yaml
+# .github/workflows/zenodo-drift.yml — tolerate the wait for the next rollup
+on: { schedule: [{ cron: '0 12 * * 1' }], workflow_dispatch: {} }
+jobs:
+  drift:
+    uses: virtualcell/zenodo-maint/.github/workflows/drift.reusable.yml@v1
+    with: { max_lag_days: 35 }
+```
+
+Or archive **every** release as it is published:
 
 ```yaml
 # .github/workflows/zenodo-archive.yml
@@ -161,7 +188,8 @@ competing DOI.
 This repo's own `.github/workflows/monitor.yml` checks every repo listed in
 [`monitored.json`](monitored.json) on a schedule (a matrix of `{repo, concept}`),
 opening a tracking issue here for any that have drifted. Add a repo by appending
-to `monitored.json` — no secrets required (public APIs only).
+to `monitored.json` — no secrets required (public APIs only). Give a repo archived by
+monthly rollup `"max_lag_days": 35`, or every release between rollups reads as drift.
 
 ## Avoiding conflicts with the native integration
 
